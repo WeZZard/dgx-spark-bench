@@ -20,7 +20,11 @@
 # having to remember this function -- and the chosen environment is printed on
 # both sides so the two can be compared in the logs.
 
-: "${KNOB_PREFIXES:=SG_ QWEN_ GLM_ DS_ SPARK_ SGLANG_ VLLM_}"
+# Prefixes whose variables travel to the worker. NCCL_ and RDMA_ are here
+# because they are knobs like any other: NCCL_DEBUG left off this list gave
+# rank 0 INFO logging and rank 1 WARN, which is harmless only because it is
+# logging. The next NCCL_ variable will not be.
+: "${KNOB_PREFIXES:=SG_ QWEN_ GLM_ DS_ SPARK_ SGLANG_ VLLM_ NCCL_ RDMA_}"
 
 # Print `A=1 B=2` for every exported variable whose name starts with a prefix.
 collect_knobs() {

@@ -126,7 +126,7 @@ def probe_kv_pool(base: str, container: str | None = None,
 
 # "KV Cache is allocated. dtype: torch.bfloat16" -- SGLang says what it actually
 # allocated, which is not the same thing as what the flag asked for.
-_KV_DTYPE_ALLOCATED = re.compile(r"KV Cache is allocated\.\s*dtype:\s*(\S+)")
+_KV_DTYPE_ALLOCATED = re.compile(r"KV Cache is allocated\.\s*dtype:\s*([^\s,;]+)")
 
 
 def probe_kv_cache_dtype(base: str, container: str | None = None,

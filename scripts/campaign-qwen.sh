@@ -28,7 +28,20 @@ IMAGE="${QWEN_IMAGE:-sglang-qwen38fn:sm121-ours}"
 MODEL_DIR="${QWEN_MODEL_DIR:-/home/station/models/hf/qwen38-flash-next-nvfp4}"
 CONTAINER="${QWEN_NAME:-sglang_qwen38fn}"
 MAXTOK="${MAXTOK:-512}"
-FLAGS="${CAMPAIGN_FLAGS:---max-total-tokens 600000 --mem-fraction-static 0.80 --cuda-graph-max-bs 8 --disable-cuda-graph-padding --ple-offload-embedding --max-mamba-cache-size 97 --sampling-backend pytorch --disable-radix-cache --context-length 120000}"
+
+# Read the flags off the RUNNING container rather than restating them here. A
+# campaign that describes the configuration it meant to launch, while the server
+# runs a different one, is how 2026-09-03 produced a result about expert
+# parallelism from a rank that never had it. `docker inspect` reports the argv
+# the process was actually started with.
+FLAGS="${CAMPAIGN_FLAGS:-$(docker inspect --format '{{join .Args " "}}' "${QWEN_NAME:-sglang_qwen38fn}" 2>/dev/null)}"
+if [ -z "$FLAGS" ]; then
+  echo "could not read the launch flags from container ${QWEN_NAME:-sglang_qwen38fn}." >&2
+  echo "The flags are the record of what was measured; set CAMPAIGN_FLAGS to proceed." >&2
+  exit 2
+fi
+echo "== flags, read from the running container:"
+echo "   $FLAGS"
 
 cell() {
   local workload="$1" users="$2" note="$3"
@@ -48,6 +61,44 @@ cell() {
     --notes "$note" \
     || echo "!! cell failed: $workload @ $users (continuing)"
 }
+
+# Warm up first, and discard it. SGLang compiles Triton kernels lazily, after
+# serving has started -- the log says so plainly:
+#
+#   Triton kernel 'chunk_gated_delta_rule_fwd_kkt_solve_kernel' took 1.71 s to
+#   compile after serving started. Serving-time compilation can stall the ...
+#
+# Served rate divides output tokens by the whole wall clock, so a few seconds of
+# one-time compilation lands entirely on whichever cell runs first and makes it
+# look like a slow configuration. Warming is not massaging the number: the
+# compilation happens once per server, not once per request, so charging it to
+# one cell would misreport every cell.
+warmup() {
+  echo "== warmup (discarded): compiling kernels at serving time"
+  for i in 1 2 3; do
+    curl -s --max-time 300 "$BASE/v1/chat/completions" \
+      -H 'Content-Type: application/json' \
+      -d '{"model":"qwen38-flash-next","messages":[{"role":"user","content":"Write one sentence about caching."}],"max_tokens":64,"temperature":0}' \
+      -o /dev/null -w "   warmup $i: http=%{http_code} %{time_total}s\n" || true
+  done
+  # a long prompt too, so the prefill path is compiled before it is measured
+  python3 - "$BASE" <<'PY' || true
+import json, sys, urllib.request
+base = sys.argv[1]
+body = {"model": "qwen38-flash-next",
+        "messages": [{"role": "user", "content": "ok " * 6000 + "\nReply with one word."}],
+        "max_tokens": 16, "temperature": 0}
+req = urllib.request.Request(base + "/v1/chat/completions",
+                             data=json.dumps(body).encode(),
+                             headers={"Content-Type": "application/json"})
+try:
+    urllib.request.urlopen(req, timeout=600).read()
+    print("   warmup long-prompt: ok")
+except Exception as e:
+    print(f"   warmup long-prompt: {e}")
+PY
+}
+warmup
 
 # The like-for-like cell first: published conditions are a ~22-token prompt.
 cell short 1 "short-prompt cell, matches the conditions every published figure was taken under"

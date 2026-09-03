@@ -9,4 +9,11 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}"
 export SPARKBENCH_DB="${SPARKBENCH_DB:-$here/results/runs.sqlite}"
-exec python3 -m sparkbench.cli "$@"
+# -P is not optional. Without it `python3 -m` prepends the CURRENT DIRECTORY to
+# sys.path, ahead of PYTHONPATH. A stray copy of the package at the repo root --
+# one careless `rsync src/ host:repo/` puts one there -- then shadows src/ and
+# the harness silently runs code that is not the code in git. That happened on
+# 2026-09-04; the two copies differed only in comments, so nothing looked wrong,
+# and the only symptom was a KV dtype string reading "bfloat16," instead of
+# "bfloat16". Next time the difference would not be cosmetic.
+exec python3 -P -m sparkbench.cli "$@"

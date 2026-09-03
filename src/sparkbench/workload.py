@@ -117,6 +117,13 @@ def build(name: str, n: int, seed: int = 20260904) -> list[Prompt]:
         # Matches the conditions every published figure in BASELINE.md was
         # taken under: a ~22-token instruction, no context to read. The point
         # is a like-for-like cell, so the text is deliberately plain.
+        #
+        # These prompts share almost their whole prefix, differing only in the
+        # trailing run number. That is harmless while the radix cache is
+        # disabled, and it is exactly what would flatter a run with the cache
+        # ON -- six requests would share one prefill. Any prefix-cache
+        # experiment must use an `agentic-*` workload, whose prompts are
+        # distinct by construction.
         for i in range(n):
             prompts.append(Prompt(
                 f"Count from 1 to 300, separated by spaces. Start now. (run {i})",

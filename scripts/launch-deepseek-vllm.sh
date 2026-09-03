@@ -36,6 +36,7 @@ set -euo pipefail
 RANK="${1:?usage: launch-deepseek-vllm.sh <rank 0|1>}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/memguard.sh"
+source "$here/scripts/lib/rdma.sh"
 
 DS_IMAGE="${DS_IMAGE:-vllm-glm53-flash:sm121-v11-dflash2}"
 DS_NAME="${DS_NAME:-vllm_dsv4}"
@@ -100,10 +101,16 @@ mounts=()
 [ -d /home/station/models ] && mounts+=( -v /home/station/models:/home/station/models:ro )
 ls /mnt/models >/dev/null 2>&1 && mounts+=( -v /mnt/models:/mnt/models:ro )
 
+rdma_report
+read -r -a RDMA_ARGS <<< "$(rdma_docker_args)"
+
 common=(
   --rm --name "$DS_NAME"
   --gpus all --ipc=host --network host
   --memory "${CAP_GIB}g" --memory-swap "${CAP_GIB}g"
+  "${RDMA_ARGS[@]}"
+  -e NCCL_IB_HCA="$RDMA_HCA"
+  -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
   -e VLLM_HOST_IP="$DS_HOST_IP"
   -e VLLM_TRITON_MLA_SPARSE=1
   -e VLLM_USE_FLASHINFER_SAMPLER=1

@@ -25,8 +25,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-
+# Deliberately no sys.path manipulation here. scripts/sparkbench sets
+# PYTHONPATH and runs python with -P; adding the repo root by hand is what let a
+# stray package copy at the root shadow src/ and be executed instead of it.
 from sparkbench import checkpoint, rates, workload  # noqa: E402
 from sparkbench.store import DEFAULT_DB, RunStore, RunTuple  # noqa: E402
 

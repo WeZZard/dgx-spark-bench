@@ -34,6 +34,7 @@ set -euo pipefail
 RANK="${1:?usage: launch-glm-sglang.sh <rank 0|1>}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/memguard.sh"
+source "$here/scripts/lib/rdma.sh"
 
 GLM_IMAGE="${GLM_IMAGE:-lmsysorg/sglang:glm-5.3-flash}"
 GLM_NAME="${GLM_NAME:-sglang_glm53}"
@@ -105,9 +106,15 @@ ls /mnt/models >/dev/null 2>&1 && mounts+=( -v /mnt/models:/mnt/models:ro )
 echo "== rank $RANK: launching $GLM_IMAGE"
 printf '   %s\n' "${args[*]}"
 
+rdma_report
+read -r -a RDMA_ARGS <<< "$(rdma_docker_args)"
+
 exec docker run --rm --name "$GLM_NAME" \
   --gpus all --ipc=host --network host \
   --memory "${CAP_GIB}g" --memory-swap "${CAP_GIB}g" \
+  "${RDMA_ARGS[@]}" \
+  -e NCCL_IB_HCA="$RDMA_HCA" \
+  -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
   -e SGLANG_HOST_IP="$GLM_HOST_IP" \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \

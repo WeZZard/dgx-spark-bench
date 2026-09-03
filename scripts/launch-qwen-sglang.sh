@@ -32,6 +32,7 @@ set -euo pipefail
 RANK="${1:?usage: launch-qwen-sglang.sh <rank 0|1>}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/memguard.sh"
+source "$here/scripts/lib/rdma.sh"
 
 QWEN_IMAGE="${QWEN_IMAGE:-sglang-qwen38fn:sm121-ours}"
 QWEN_NAME="${QWEN_NAME:-sglang_qwen38fn}"
@@ -69,6 +70,21 @@ QWEN_KV_DTYPE="${QWEN_KV_DTYPE:-}"   # empty => engine default, recorded as such
 # being fatal: "FlashInfer TRTLLM MoE deferred finalize is disabled
 # (moe_runner_backend=auto, quant_method=ModelOptNvFp4FusedMoEMethod)".
 QWEN_MOE_BACKEND="${QWEN_MOE_BACKEND:-flashinfer_cutlass}"
+# MTP. The published recipe reports 69.7 tok/s peak with it and "~20 without",
+# so this is the single largest lever on this model and not a detail. The
+# checkpoint carries the draft head already -- `mtp.fc_embedding.weight`,
+# `mtp.pre_fc_norm_embedding.weight` and friends are in the safetensors -- and
+# qwen4_exp.py takes an `is_nextn` path and loads tensors whose names contain
+# "mtp". SGLang reaches it through --speculative-algorithm NEXTN, with no
+# separate draft model to point at.
+#
+# Default off for the first pass on purpose: the no-MTP number is the control,
+# and BASELINE.md quotes a "~20 without MTP" figure to check it against. Turn it
+# on with QWEN_SPEC=NEXTN once the control is recorded.
+QWEN_SPEC="${QWEN_SPEC:-off}"
+QWEN_SPEC_STEPS="${QWEN_SPEC_STEPS:-1}"
+QWEN_SPEC_TOPK="${QWEN_SPEC_TOPK:-1}"
+QWEN_SPEC_DRAFT_TOKENS="${QWEN_SPEC_DRAFT_TOKENS:-2}"
 QWEN_EXTRA="${QWEN_EXTRA:-}"
 
 # --- QSA long-context guard -------------------------------------------------
@@ -122,6 +138,14 @@ args=(
 # and a prefix cache is worth roughly 3x on multi-turn agent traffic. So it is
 # a knob here, defaulting to the recipe so the reproduction is faithful.
 [ "$QWEN_RADIX" = "off" ] && args+=( --disable-radix-cache )
+if [ "$QWEN_SPEC" != "off" ]; then
+  args+=(
+    --speculative-algorithm "$QWEN_SPEC"
+    --speculative-num-steps "$QWEN_SPEC_STEPS"
+    --speculative-eagle-topk "$QWEN_SPEC_TOPK"
+    --speculative-num-draft-tokens "$QWEN_SPEC_DRAFT_TOKENS"
+  )
+fi
 [ -n "$QWEN_KV_DTYPE" ] && args+=( --kv-cache-dtype "$QWEN_KV_DTYPE" )
 # shellcheck disable=SC2206
 [ -n "$QWEN_EXTRA" ] && args+=( $QWEN_EXTRA )
@@ -147,9 +171,15 @@ esac
 echo "== rank $RANK: launching $QWEN_IMAGE"
 printf '   %s\n' "${args[*]}"
 
+rdma_report
+read -r -a RDMA_ARGS <<< "$(rdma_docker_args)"
+
 exec docker run --rm --name "$QWEN_NAME" \
   --gpus all --ipc=host --network host \
   --memory "${CAP_GIB}g" --memory-swap "${CAP_GIB}g" \
+  "${RDMA_ARGS[@]}" \
+  -e NCCL_IB_HCA="$RDMA_HCA" \
+  -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
   -e SGLANG_HOST_IP="$QWEN_HOST_IP" \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
   -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \

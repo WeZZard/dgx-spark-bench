@@ -33,7 +33,11 @@ DEST="$STORE/$NAME"
 # script that assumes an interactive shell finds no CLI at all.
 export PATH="$HOME/.local/bin:$PATH"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
-export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
+# The Xet backend fails on these nodes -- "CAS Client Error: Request
+# middleware error" from `hf download`, huggingface_hub 1.28.0, aarch64.
+# Auth and plain HTTPS are fine; with Xet off, downloads run at the WAN
+# limit. See docs/baselines.md, "Gotchas found during provisioning".
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 
 if [[ ! "$REV" =~ ^[0-9a-f]{40}$ ]]; then
   echo "refusing: '$REV' is not a 40-char commit sha." >&2

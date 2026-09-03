@@ -18,10 +18,12 @@
 #    at startup; this is one of the four GB10 fixes the GLM recipe reports and
 #    it costs nothing to apply to every SGLang launch.
 #
-# 3. `--ple-offload-embedding`. Not optional. The checkpoint carries 47.68 GiB
+# 3. `--ple-offload-embedding` on by default. The checkpoint carries 47.68 GiB
 #    of per-layer n-gram embedding tables (`scripts/audit-checkpoint.py`, and
-#    `docs/checkpoints.md`), 38% of its bytes. Leaving them resident is what
-#    makes a 600,000-token pool impossible.
+#    `docs/checkpoints.md`), 38% of its bytes, and the published recipe passes
+#    the flag. An earlier version of this comment called it "not optional";
+#    the arithmetic says otherwise and QWEN_PLE_OFFLOAD=off exists to measure
+#    it, because host-memory gathers per layer may cost more than they save.
 #
 # The QSA guard is enforced below rather than documented: this image ships the
 # SM121 QSA kernel and NOT the pr36845 packed-varlen successor, and the source
@@ -81,6 +83,17 @@ QWEN_MOE_BACKEND="${QWEN_MOE_BACKEND:-flashinfer_cutlass}"
 # Default off for the first pass on purpose: the no-MTP number is the control,
 # and BASELINE.md quotes a "~20 without MTP" figure to check it against. Turn it
 # on with QWEN_SPEC=NEXTN once the control is recorded.
+# Per-layer embedding offload. The published recipe passes it and the checkpoint
+# carries 47.68 GiB of ple.ple_embedding.ngram tensors, 38% of its bytes, so
+# offloading them makes the memory budget comfortable.
+#
+# A knob rather than a constant because it may also be expensive. With RoCE in
+# place decode still costs ~57 ms a token across 48 layers -- about 1.2 ms a
+# layer -- where an RDMA all-reduce is on the order of 10 microseconds and
+# reading the active NVFP4 weights costs roughly 2.7 ms a token in total.
+# Something is unaccounted for, and 48 per-layer gathers from a 2.5-million-row
+# table living in host memory is the obvious candidate.
+QWEN_PLE_OFFLOAD="${QWEN_PLE_OFFLOAD:-on}"
 QWEN_SPEC="${QWEN_SPEC:-off}"
 QWEN_SPEC_STEPS="${QWEN_SPEC_STEPS:-1}"
 QWEN_SPEC_TOPK="${QWEN_SPEC_TOPK:-1}"
@@ -128,7 +141,6 @@ args=(
   --mem-fraction-static "$QWEN_MEM_FRACTION"
   --cuda-graph-max-bs "$QWEN_CUDA_GRAPH_BS"
   --disable-cuda-graph-padding
-  --ple-offload-embedding
   --max-mamba-cache-size "$QWEN_MAMBA_CACHE"
   --sampling-backend "$QWEN_SAMPLING"
   --moe-runner-backend "$QWEN_MOE_BACKEND"
@@ -138,6 +150,7 @@ args=(
 # and a prefix cache is worth roughly 3x on multi-turn agent traffic. So it is
 # a knob here, defaulting to the recipe so the reproduction is faithful.
 [ "$QWEN_RADIX" = "off" ] && args+=( --disable-radix-cache )
+[ "$QWEN_PLE_OFFLOAD" = "on" ] && args+=( --ple-offload-embedding )
 if [ "$QWEN_SPEC" != "off" ]; then
   args+=(
     --speculative-algorithm "$QWEN_SPEC"

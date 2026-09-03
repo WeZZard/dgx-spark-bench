@@ -110,8 +110,18 @@ Where the bytes are matters for the memory budget:
 
 The PLE tensors are `[2500012, 160]` per layer — a 2.5-million-entry n-gram
 table. This is what `--ple-offload-embedding` in the published recipe exists
-for: moving 47.68 GiB to host memory is what leaves room for a 600,000-token
-KV pool on two nodes. It is not an optional tuning flag.
+for: moving 47.68 GiB out of the GPU's budget is what makes room for a
+600,000-token KV pool on two nodes.
+
+An earlier version of this file called that flag "not optional". That was an
+overstatement, and the arithmetic does not support it. At TP2 the rest of the
+checkpoint is ~39 GiB a node, and the bf16 600,000-token pool is ~7 GB, so a
+node carrying the table too needs ~94 GiB if it is replicated and ~70 GiB if it
+is TP-sharded — both inside the 109 GiB container cap. Whether offloading helps
+or costs is therefore a measurement, and `QWEN_PLE_OFFLOAD=off` exists to take
+it. It matters because 48 per-layer gathers from a 2.5-million-row table in
+host memory is the leading explanation for the ~1.2 ms a layer that remains
+unaccounted for after the interconnect was fixed.
 
 Two other structural facts fall out of the same audit, both relevant later:
 the checkpoint carries `mtp.*` tensors (the MTP draft head — the baseline's

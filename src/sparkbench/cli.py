@@ -141,6 +141,22 @@ def cmd_measure(a) -> int:
     return 0 if not failed else 1
 
 
+def _config_of(notes: str | None) -> str:
+    """The configuration tag a sweep stamped on its runs.
+
+    Two sweeps of the same model differ only in the launcher flags, and those
+    live in a column nobody reads across. CONFIG_NOTE puts the difference in
+    front of the reader, which is the whole reason a comparison was run.
+    """
+    if not notes:
+        return "-"
+    if notes.startswith("["):
+        end = notes.find("]")
+        if end > 0:
+            return notes[1:end]
+    return "-"
+
+
 REPORT_HEADER = """# Measured results
 
 Every row is a complete six-field tuple, because a number missing any of them
@@ -196,17 +212,17 @@ def cmd_report(a) -> int:
         out.append(f"- checkpoint revision `{first['model_revision']}`")
         out.append(f"- weight, measured from the checkpoint: {first['weight']}")
         out.append("")
-        hdr = ("workload", "prompt tok", "users", "KV cache", "KV pool",
-               "engine", "served rate", "decode rate", "TTFT p50", "needle", "failed")
+        hdr = ("config", "workload", "prompt tok", "users", "KV cache", "KV pool",
+               "served rate", "decode rate", "TTFT p50", "needle", "failed")
         out.append("| " + " | ".join(hdr) + " |")
         out.append("|" + "|".join("---" for _ in hdr) + "|")
         for r in rs:
             out.append(
-                "| {} | {} | {} | {} | {:,} | {} | **{}** | {} | {} | {} | {} |".format(
+                "| {} | {} | {} | {} | {} | {:,} | **{}** | {} | {} | {} | {} |".format(
+                    _config_of(r["notes"]),
                     r["workload"],
                     f"{r['prompt_tokens']:,}" if r["prompt_tokens"] else "-",
                     r["users"], r["kv_cache"], r["kv_pool_tokens"],
-                    f"{r['engine']} `{(r['engine_version'] or '')[:24]}`",
                     f"{r['served']:.1f}" if r["served"] is not None else "-",
                     f"{r['decode']:.1f}" if r["decode"] is not None else "-",
                     f"{r['ttft']:.0f} ms" if r["ttft"] is not None else "-",

@@ -51,7 +51,7 @@ The full detail for each configuration follows.
 | field | value |
 |---|---|
 | model | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` rev `86f746b36186f0e567729a5c06a8c918caba82a9` |
-| weight | FP8 (official) |
+| weight | published as "FP8 (official)" — **unverified for this checkpoint; the label is wrong on its `0731` sibling**, see below |
 | KV cache | `nvfp4_ds_mla`, block size 256 |
 | engine | vLLM `0.25.2.dev0+g752a3a504.d20260714` (anemll 0.1.1), DSpark k=6 greedy |
 | decoding users | `max_num_seqs 6` |
@@ -68,6 +68,24 @@ C2 91.7 / C4 151.1 / C6 197.3. The spread is DSpark acceptance varying with
 content — ~78% on structured code, ~34% on prose, ~56% on mixed agent traffic
 — not tuning. Judge any agentic result against the prose and mixed figures,
 never against "count to 300".
+
+**The "FP8" label is wrong on the sibling checkpoint, and that probably
+changes what this comparison means.** Vision-Exp is not on disk here, so it has
+not been audited. Its text sibling has: `scripts/audit-checkpoint.py` finds
+**138.00 GiB of packed 4-bit experts in both** DeepSeek checkpoints we hold.
+`deepseek-ai/DeepSeek-V4-Flash-0731` — the one the same sources call FP8 —
+carries MXFP4 experts (E8M0 scales, block 32), and
+`nvidia/DeepSeek-V4-Flash-nvfp4-DSpark` carries NVFP4 experts (E4M3 scales,
+block 16). `0731`'s own config declares `expert_dtype: fp4`.
+
+If Vision-Exp is built the same way, then 49.6–53.8 against 80.1 is **not**
+8-bit against 4-bit and cannot be explained by weight bandwidth, because both
+builds would move the same expert bytes. The difference would have to be in
+the kernel path, which makes `VLLM_USE_B12X_MOE` and DSpark acceptance the two
+things to separate by measurement. **Audit Vision-Exp with
+`scripts/audit-checkpoint.py --verify` the moment it is downloaded, before any
+run**, and settle this rather than assuming either way. Evidence for the
+sibling in `docs/checkpoints.md`.
 
 Two failures in this stack are silent:
 

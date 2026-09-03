@@ -66,6 +66,38 @@ Three things to measure, in this order.
    `--kv-cache-dtype` and neither did the first runs here. Halving the bytes a
    token is the obvious way to buy back what speculation took.
    `QWEN_KV_DTYPE=fp8_e4m3`.
+
+   **Tried. It buys the pool back and then crashes under load.**
+
+   The pool goes from 145,024 tokens to **332,480**, a factor of 2.29, which is
+   what was wanted: six 30,000-token contexts need 180,000 and now fit. Speed on
+   the cells that completed is a wash — 23.7 against 25.9 on `short` at one
+   user, 84.0 against 77.9 on `code` at six.
+
+   Then `agentic-4k` at six users killed the server, with 6 of 6 requests
+   failing and no output at all:
+
+   ```
+   [TP1] Scheduler hit an exception: ...
+     File ".../triton/language/semantic.py", line 1500, in dot
+       assert rhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32, ...
+   AssertionError: Unsupported rhs dtype fp8e4nv
+   ```
+
+   A Triton `dot` in the attention path cannot take an fp8 right-hand side in
+   this build. It survives one request at a time and dies on a concurrent
+   multi-thousand-token prefill, so the failure is invisible until exactly the
+   workload this project exists to measure. Both nodes came back clean —
+   117 GiB available, nothing in state D — and the harness recorded the cell as
+   `0.0 tok/s, 6 requests, 6 failed` rather than dropping it, which is the
+   behaviour that keeps a broken configuration from looking merely absent.
+
+   **So fp8 KV is not available on this image**, and the pool that speculation
+   takes cannot be bought back this way. What remains: `nvfp4` and
+   `fp4_mx_block16` are also offered as KV dtypes and may hit the same Triton
+   limit; reducing `--max-mamba-cache-size` frees budget the mamba state is
+   holding; and accepting the smaller pool with concurrency capped at long
+   context is a legitimate answer rather than a failure.
 2. **A longer draft chain.** Acceptance of 0.88-0.91 at a 2-token budget says
    the chain is the constraint. `--speculative-num-steps 3` with
    `--speculative-num-draft-tokens 4`.

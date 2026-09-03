@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Refuse any commit that carries a secret. This repo is public; one careless
+# commit is permanent.
+set -e
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks is not installed; refusing to commit to a public repo without it" >&2
+  exit 1
+fi
+gitleaks protect --staged --redact --verbose

@@ -1,0 +1,9 @@
+# Copy to inventory.local.yml (untracked) and fill in your own addresses.
+head:
+  ssh: node-a
+  fabric_ip: 10.10.10.1
+worker:
+  ssh: node-b
+  fabric_ip: 10.10.10.2
+model_store: /home/USER/models
+repo_path: /home/USER/dgx-spark-bench

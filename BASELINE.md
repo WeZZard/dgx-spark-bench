@@ -102,6 +102,56 @@ Sources:
 - https://github.com/tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark
 - https://forums.developer.nvidia.com/t/4-node-dgx-spark-cluster-with-deepseek-v4-flash-0731-dspark-benchmark-prefill-2-500-t-s-decode-90-t-s/378878
 
+### What the sources actually say, checked 2026-09-04
+
+The two sources above were re-read against the row at the top of this file.
+Five things do not match, and three of them change the tuple.
+
+**1. "NVFP4" in this row is the KV cache, not the weights.** The repository is
+named `...-1M-NVFP4-KV-...`, its launcher passes `--kv-cache-dtype
+nvfp4_ds_mla`, and it passes **no `--quantization` flag at all** -- so the
+weights are whatever the checkpoint carries, which for `0731` this project has
+measured as MXFP4 experts plus FP8 attention (`docs/checkpoints.md`). The
+`weight` column at the top of this file should not read NVFP4 on the strength
+of that repository name.
+
+**2. The 84.3 / 197 figures are the text model, not Vision-Exp.** The
+repository reports Vision-Exp as *1.03 s end-to-end for a 336x336 image and a
+26-token answer*. The decode figures -- 78.4 tok/s peak at 98.9% acceptance,
+84.3 structured, 67.6 mean, 197 aggregate at c6 -- are quoted for the text
+`0731` checkpoint. The row therefore pairs a Vision-Exp model field with text
+throughput.
+
+**3. The engine version does not match.** Both sources say
+`0.21.1rc1.dev339+g1967a5627bc3`. This file says
+`0.25.2.dev0+g752a3a504.d20260714`. Rule 1 puts the version in the tuple
+"because the fixes live in specific builds", so this is not a cosmetic
+difference: reproducing against the wrong version is reproducing nothing.
+
+**4. B12X is a flag as well as an environment variable.** The four-node thread
+uses `--moe-backend b12x`. Setting only `VLLM_USE_B12X_MOE=1` may not be
+enough, and this project's own vLLM image defines **neither** -- see
+`docs/engines.md`.
+
+**5. The published aggregates lean on prefix-cache hits.** The four-node thread
+gives 208.74 tok/s aggregate at c6 **with cache hits**, and says plainly that
+cold 150K unique prompts performed significantly worse. This project's agentic
+workload sends distinct prompts by construction. A lower number here is
+therefore a different measurement condition, not a tuning gap, and the
+like-for-like comparison has to be built rather than assumed.
+
+Other flag differences, smaller but worth carrying into the launcher:
+`--max-num-seqs 12` (not 6), `--gpu-memory-utilization 0.85` (not 0.835),
+`--max-num-batched-tokens 8192` (not 4096), and
+`--speculative-config '{"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic"}'`.
+Environment: `VLLM_TRITON_MLA_SPARSE=1`, `VLLM_USE_FLASHINFER_SAMPLER=1`,
+`VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=1800`, `NCCL_SOCKET_IFNAME=enp1s0f0np0`.
+Patch 4 verifies as "6 shared_experts matches expected; grep for 'Skipping'
+should return empty".
+
+None of this is a reason to discard the row. It is a reason to reproduce the
+configuration the sources describe rather than the one this file recorded.
+
 ## Qwen3.8-Flash-Next
 
 | field | value |

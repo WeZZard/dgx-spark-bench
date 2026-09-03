@@ -130,10 +130,29 @@ def weight_field(a: Audit) -> str:
 def revision(path: str) -> str | None:
     """The commit the files were fetched at.
 
-    `hf download` leaves one `.cache/huggingface/download/<file>.metadata` per
-    file whose first line is the commit hash. Any one of them will do; they all
-    come from the same snapshot.
+    Two sources, in order:
+
+    1. `.provenance.json`, written by scripts/fetch-checkpoint.sh. Preferred
+       because it survives `.cache` being pruned to reclaim disk, which is a
+       thing that happens on a node holding 700 GiB of checkpoints.
+    2. `hf download`'s own `.cache/huggingface/download/<file>.metadata`, whose
+       first line is the commit hash. Any one of them will do; they all come
+       from the same snapshot. This is the only source for the checkpoints that
+       were already on disk before the fetch script existed.
+
+    Returns None when neither is present — and None is not "main". A run whose
+    checkpoint cannot state its revision fails the tuple rule.
     """
+    sidecar = os.path.join(path, ".provenance.json")
+    if os.path.isfile(sidecar):
+        try:
+            with open(sidecar) as fh:
+                rev = json.load(fh).get("revision", "")
+            if re.fullmatch(r"[0-9a-f]{40}", rev or ""):
+                return rev
+        except (OSError, ValueError):
+            pass
+
     root = os.path.join(path, ".cache", "huggingface", "download")
     if not os.path.isdir(root):
         return None

@@ -124,22 +124,52 @@ def probe_kv_pool(base: str, container: str | None = None,
     )
 
 
-def probe_kv_cache_dtype(base: str) -> tuple[str, str]:
+# "KV Cache is allocated. dtype: torch.bfloat16" -- SGLang says what it actually
+# allocated, which is not the same thing as what the flag asked for.
+_KV_DTYPE_ALLOCATED = re.compile(r"KV Cache is allocated\.\s*dtype:\s*(\S+)")
+
+
+def probe_kv_cache_dtype(base: str, container: str | None = None,
+                         ssh_host: str | None = None) -> tuple[str, str]:
     """(dtype, source).
 
     CLAUDE.md: "If no flag is passed, record `default` and go and find out what
-    the default actually was." So when the server reports nothing, this returns
-    the literal string 'default' *with a source that says so*, which keeps the
-    run storable while leaving the omission visible in the database instead of
-    dressed up as a measurement.
+    the default actually was." Going and finding out is this function's job, so
+    it prefers the dtype the engine says it *allocated* over the one the
+    server args say was *requested*.
+
+    That distinction is not academic. Launching Qwen with no --kv-cache-dtype
+    leaves `kv_cache_dtype: "auto"` in the server args while the engine logs
+    "KV Cache is allocated. dtype: torch.bfloat16". Recording "auto" would put
+    a non-answer in the field this project got wrong last time; recording
+    "bfloat16 (engine default)" records what the pool is actually made of, and
+    makes the cost of the default visible -- bf16 is twice fp8 per token, and
+    the pool is what caps the users.
     """
+    if container:
+        cmd = ["docker", "logs", "--tail", "4000", container]
+        if ssh_host:
+            cmd = ["ssh", "-o", "ConnectTimeout=20", ssh_host, " ".join(cmd)]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            blob = (out.stdout or "") + (out.stderr or "")
+            hits = _KV_DTYPE_ALLOCATED.findall(blob)
+            if hits:
+                dtype = hits[-1].replace("torch.", "")
+                return dtype, "log:allocated (engine's own report of the pool it built)"
+        except Exception:
+            pass
     try:
         b = _get(base, "/get_server_info").json()
         args = b.get("server_args") or b
         for key in ("kv_cache_dtype", "cache_dtype"):
             v = args.get(key)
-            if v:
-                return str(v), f"http:/get_server_info:{key}"
+            if v and str(v) != "auto":
+                return str(v), f"http:/get_server_info:{key} (requested, not confirmed allocated)"
+        if args.get("kv_cache_dtype") == "auto":
+            return ("auto -- UNRESOLVED",
+                    "server args say auto and the allocation was not read; "
+                    "find the allocated dtype before publishing this run")
     except Exception:
         pass
     return "default", "unread: engine did not report it -- resolve before publishing"

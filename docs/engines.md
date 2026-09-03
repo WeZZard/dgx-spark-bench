@@ -69,6 +69,32 @@ measurement rather than a superstition.
 KV cache dtypes this build accepts: `auto, fp8_e5m2, fp8_e4m3, mxfp8, bf16,
 nvfp4, fp4_mx_block16, fp4_e2m1`.
 
+**The default is bf16, and the published recipe never sets it.** Launched with
+no `--kv-cache-dtype`, the server args read `auto` while the engine logs what it
+actually built: `KV Cache is allocated. dtype: torch.bfloat16`. This is the
+field `BASELINE.md` says the previous attempt never set on any model, so the
+harness now reads the *allocated* dtype out of the engine's own log rather than
+the requested one out of the server args — `auto` is a non-answer in the tuple.
+bf16 is two bytes a token where fp8 is one, so the default halves the pool that
+`--max-total-tokens` can be backed by, and the pool is what caps the users.
+
+**`--moe-runner-backend flashinfer_cutlass` is required and is not in the
+published recipe.** With the default `auto`, the load completes, the KV cache
+allocates, and then the first forward pass dies:
+
+```
+NotImplementedError: Unsupported moe_runner_backend for NVFP4 MoE:
+MoeRunnerBackend.FLASHINFER_TRTLLM. Use --moe-runner-backend flashinfer_cutlass instead.
+```
+
+The warning is present twenty minutes earlier, at load time, phrased as though
+it were routine: `FlashInfer TRTLLM MoE deferred finalize is disabled
+(moe_runner_backend=auto, quant_method=ModelOptNvFp4FusedMoEMethod)`. Worth
+noting what this cost even when it failed loudly: eleven minutes of weight
+loading on both nodes, and rank 0 then sat holding roughly 90 GiB after rank 1
+had already exited — the same shape as the 2026-09-03 incident, and the reason
+the launcher tears down and waits on `MemAvailable` rather than sleeping.
+
 ## `vllm-glm53-flash:sm121-v11-dflash2` — closer to the DeepSeek baseline than its name suggests
 
 Built for GLM, but it registers `DeepseekV4ForCausalLM` and `DeepSeekV4MTPModel`,

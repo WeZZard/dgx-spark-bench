@@ -47,7 +47,7 @@ def cmd_probe(a) -> int:
     except probe.ProbeFailed as e:
         print(f"  engine         UNREADABLE: {e}")
         return 1
-    dtype, dsrc = probe.probe_kv_cache_dtype(a.base)
+    dtype, dsrc = probe.probe_kv_cache_dtype(a.base, a.container, a.ssh_host)
     print(f"  kv cache dtype {dtype}   [{dsrc}]")
     try:
         pool, psrc = probe.probe_kv_pool(a.base, a.container, a.ssh_host)
@@ -69,7 +69,7 @@ def cmd_measure(a) -> int:
         return 2
 
     engine, version = probe.probe_engine(a.base)
-    kv_dtype, kv_dtype_src = probe.probe_kv_cache_dtype(a.base)
+    kv_dtype, kv_dtype_src = probe.probe_kv_cache_dtype(a.base, a.container, a.ssh_host)
     if a.kv_cache:  # a flag the launcher actually passed beats an unread default
         kv_dtype, kv_dtype_src = a.kv_cache, "launcher flag"
     pool, pool_src = probe.probe_kv_pool(a.base, a.container, a.ssh_host)

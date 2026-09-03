@@ -57,6 +57,18 @@ QWEN_CTX="${QWEN_CTX:-120000}"
 QWEN_SAMPLING="${QWEN_SAMPLING:-pytorch}"
 QWEN_RADIX="${QWEN_RADIX:-off}"      # recipe disables it; re-decided here, see below
 QWEN_KV_DTYPE="${QWEN_KV_DTYPE:-}"   # empty => engine default, recorded as such
+# The published recipe does not mention this flag, and on this build the run
+# dies without it, at the first forward pass rather than at load:
+#
+#   NotImplementedError: Unsupported moe_runner_backend for NVFP4 MoE:
+#   MoeRunnerBackend.FLASHINFER_TRTLLM. Use --moe-runner-backend
+#   flashinfer_cutlass instead.
+#
+# The auto-selection picks a TRTLLM MoE runner that has no NVFP4 path. The
+# warning is there twenty minutes earlier, at load time, and says nothing about
+# being fatal: "FlashInfer TRTLLM MoE deferred finalize is disabled
+# (moe_runner_backend=auto, quant_method=ModelOptNvFp4FusedMoEMethod)".
+QWEN_MOE_BACKEND="${QWEN_MOE_BACKEND:-flashinfer_cutlass}"
 QWEN_EXTRA="${QWEN_EXTRA:-}"
 
 # --- QSA long-context guard -------------------------------------------------
@@ -103,6 +115,7 @@ args=(
   --ple-offload-embedding
   --max-mamba-cache-size "$QWEN_MAMBA_CACHE"
   --sampling-backend "$QWEN_SAMPLING"
+  --moe-runner-backend "$QWEN_MOE_BACKEND"
 )
 # BASELINE.md flags this one for re-decision rather than copying: the published
 # recipe passes --disable-radix-cache because their workload is not agentic,

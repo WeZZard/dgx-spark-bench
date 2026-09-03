@@ -47,7 +47,37 @@ GLM_MODEL="${GLM_MODEL:-$store/glm53-flash-nvfp4-ref}"
 GLM_DRAFT="${GLM_DRAFT:-$store/glm53-dflash2-draft}"
 
 GLM_EP="${GLM_EP:-on}"                      # expert parallelism: see note 1
-GLM_DSA="${GLM_DSA:-flashinfer_sparse_mla}" # see note 2; fallback fa3
+# EMPTY MEANS AUTO-DETECT, and empty is the right default here.
+#
+# This was flashinfer_sparse_mla, which is not something the published
+# configuration asks for -- its flags are only `--max-mamba-cache-size 40
+# --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.92 --enable-multimodal`.
+# Pinning it cost a 17-minute weight load and then:
+#
+#   ValueError: flashinfer_sparse_mla supports only GLM DSA with FP8 KV cache
+#   on NVIDIA SM120/SM121; got model_arch='Glm5NextForConditionalGeneration'
+#
+# The SM and the KV dtype were both right. The architecture was not: the
+# validator accepts only ("GlmMoeDsaForCausalLM", "GlmMoeDsaForCausalLMNextN")
+# and both GLM checkpoints on this node are Glm5NextForConditionalGeneration
+# (model_type glm5_next). That kernel is for a different GLM family, so no
+# value of this knob was ever going to be flashinfer_sparse_mla here.
+#
+# There is no "auto" among the choices -- SGLang auto-detects from hardware
+# and kv_cache_dtype only when the flag is ABSENT. Read out of
+# srt/arg_groups/overrides.py, what auto-detect will do here is decided:
+# Glm5NextForConditionalGeneration IS in _DEEPSEEK_FAMILY_ARCHS so the pass
+# runs, is_glm_sm12_fp8 requires the arch to be exactly GlmMoeDsaForCausalLM
+# so it is False, and the fp8_e4m3 branch then gives
+# `"trtllm" if major >= 10 else "flashmla_kv"` -- major is 12 on GB10, so
+# both backends resolve to trtllm. Confirm that in the log rather than
+# trusting this comment.
+#
+# It matters that it is not tilelang: tilelang's fp8 KV path is ROCm-only
+# (the CUDA kernel hardcodes bfloat16) and _check_tilelang_dsa_fp8_kv would
+# reject it, and separately the tilelang DSA kernel overflows shared memory
+# on GB10 at 8-token verify (BASELINE.md).
+GLM_DSA="${GLM_DSA:-}"
 GLM_KV_DTYPE="${GLM_KV_DTYPE:-fp8_e4m3}"    # PR #36904's fp8 KV; bf16 before it
 GLM_MEM="${GLM_MEM:-0.92}"
 GLM_MAMBA="${GLM_MAMBA:-40}"
@@ -92,10 +122,15 @@ args=(
   --max-mamba-cache-size "$GLM_MAMBA"
   --mamba-ssm-dtype "$GLM_MAMBA_DTYPE"
   --max-running-requests "$GLM_RUNNING"
-  --dsa-prefill-backend "$GLM_DSA"
-  --dsa-decode-backend "$GLM_DSA"
   --moe-runner-backend "$GLM_MOE_BACKEND"
 )
+# Published flag, and the arch is ForConditionalGeneration: this build
+# already logs "Multimodal attention backend not set. Use triton_attn" on
+# its own, but the baseline passes it explicitly, so reproduce that.
+[ "${GLM_MULTIMODAL:-on}" = "on" ] && args+=( --enable-multimodal )
+if [ -n "$GLM_DSA" ]; then
+  args+=( --dsa-prefill-backend "$GLM_DSA" --dsa-decode-backend "$GLM_DSA" )
+fi
 [ "$GLM_EP" = "on" ] && args+=( --ep-size 2 )
 if [ "$GLM_SPEC" = "on" ]; then
   [ -d "$GLM_DRAFT" ] || { echo "rank $RANK: drafter $GLM_DRAFT not readable" >&2; exit 6; }

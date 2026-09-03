@@ -1,0 +1,24 @@
+# vLLM with Ray, for two-node DeepSeek.
+#
+# The stock image cannot serve a model across two nodes. vLLM has no
+# --node-rank: it accepts `ray`, `mp`, `uni` or `external_launcher` as the
+# distributed executor, `mp` and `uni` are single-node, and `ray` is not
+# installed in this image (`ModuleNotFoundError: No module named 'ray'`).
+# torchrun is present, so external_launcher is a genuine alternative, but Ray is
+# the path the published recipe takes and the one vLLM's multi-node docs assume.
+#
+# The base image's ENTRYPOINT is ["vllm","serve"], which is why the launcher
+# must pass --entrypoint: without it, `docker run IMAGE bash -c ...` becomes
+# `vllm serve bash -c ...`.
+ARG BASE=vllm-glm53-flash:sm121-v11-dflash2
+FROM ${BASE}
+
+# huggingface.co is not reachable from these nodes and neither is unmirrored
+# PyPI at usable speed; the China acceleration path is not optional here.
+# Measured 2026-09-04: tuna 0.38 s, aliyun 0.22 s to the ray index.
+ARG PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir -i "${PIP_INDEX}" "ray[default]" \
+ && python3 -c "import ray; print('ray', ray.__version__)"
+
+# Leave the base entrypoint alone so the image stays a drop-in for anything
+# that already runs it as `vllm serve ...`.

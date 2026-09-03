@@ -38,7 +38,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/memguard.sh"
 source "$here/scripts/lib/rdma.sh"
 
-DS_IMAGE="${DS_IMAGE:-vllm-glm53-flash:sm121-v11-dflash2}"
+# Built by scripts/build-vllm-ray.sh: the stock image has no ray, and vLLM
+# cannot span two nodes without it (or without an external launcher).
+DS_IMAGE="${DS_IMAGE:-vllm-dsv4:ray}"
 DS_NAME="${DS_NAME:-vllm_dsv4}"
 DS_PORT="${DS_PORT:-8888}"
 DS_MASTER="${DS_MASTER:-10.10.10.1}"
@@ -106,6 +108,9 @@ read -r -a RDMA_ARGS <<< "$(rdma_docker_args)"
 
 common=(
   --rm --name "$DS_NAME"
+  # The base image ENTRYPOINT is ["vllm","serve"], so without this every
+  # command below would be appended to it as arguments.
+  --entrypoint bash
   --gpus all --ipc=host --network host
   --memory "${CAP_GIB}g" --memory-swap "${CAP_GIB}g"
   "${RDMA_ARGS[@]}"
@@ -124,14 +129,14 @@ if [ "$RANK" = 1 ]; then
   # places a TP worker onto this node's GPU.
   echo "== rank 1: joining ray at ${DS_MASTER}:${DS_MASTER_PORT}"
   exec docker run "${common[@]}" "${mounts[@]}" "$DS_IMAGE" \
-    bash -c "ray start --address=${DS_MASTER}:${DS_MASTER_PORT} \
+    -c "ray start --address=${DS_MASTER}:${DS_MASTER_PORT} \
                        --num-gpus=1 --block"
 fi
 
 echo "== rank 0: starting ray head and serving $DS_IMAGE"
 printf '   %s\n' "${args[*]}"
 exec docker run "${common[@]}" "${mounts[@]}" "$DS_IMAGE" \
-  bash -c "ray start --head --port=${DS_MASTER_PORT} --num-gpus=1 && \
+  -c "ray start --head --port=${DS_MASTER_PORT} --num-gpus=1 && \
            echo '== waiting for 2 ray nodes ==' && \
            for i in \$(seq 1 60); do \
              n=\$(python3 -c \"import ray;ray.init(address='auto');print(len([x for x in ray.nodes() if x['Alive']]))\" 2>/dev/null || echo 0); \

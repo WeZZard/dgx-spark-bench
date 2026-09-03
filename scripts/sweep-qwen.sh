@@ -37,14 +37,21 @@ done
 ( setsid nohup bash scripts/bring-up.sh scripts/launch-qwen-sglang.sh > "$log" 2>&1 < /dev/null & )
 
 echo "== waiting up to ${READY_DEADLINE_S}s for /health"
-deadline=$(( $(date +%s) + READY_DEADLINE_S ))
+started=$(date +%s)
+deadline=$(( started + READY_DEADLINE_S ))
+# The container does not exist for the first few seconds: bring_up has to reach
+# the worker over ssh, drop the page cache and wait on MemAvailable before it
+# runs `docker run`. Treating "absent" as fatal from the first iteration is a
+# race, and it lost -- the wrapper exited while the detached bring-up carried on
+# loading a 126 GiB model that nothing was then going to measure.
+STARTUP_GRACE_S="${STARTUP_GRACE_S:-180}"
 while :; do
   if curl -sf --max-time 5 "$BASE/health" >/dev/null 2>&1; then
-    echo "== ready after $(( READY_DEADLINE_S - (deadline - $(date +%s)) ))s"; break
+    echo "== ready after $(( $(date +%s) - started ))s"; break
   fi
   st=$(timeout 15 docker inspect -f '{{.State.Status}}' "$NAME" 2>/dev/null || echo absent)
-  if [ "$st" != "running" ]; then
-    echo "== container is '$st' before becoming ready; last log lines:" >&2
+  if [ "$st" != "running" ] && [ $(( $(date +%s) - started )) -gt "$STARTUP_GRACE_S" ]; then
+    echo "== container is '$st' after ${STARTUP_GRACE_S}s grace; last log lines:" >&2
     tr '\r' '\n' < "$log" | grep -vE '^\s*$|Multi-thread' | tail -20 >&2
     exit 1
   fi

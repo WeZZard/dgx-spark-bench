@@ -68,8 +68,27 @@ Three things to measure, in this order.
    `QWEN_KV_DTYPE=fp8_e4m3`.
 2. **A longer draft chain.** Acceptance of 0.88-0.91 at a 2-token budget says
    the chain is the constraint. `--speculative-num-steps 3` with
-   `--speculative-num-draft-tokens 4`. Note this will take *more* pool again,
-   so it has to be measured with the pool recorded, not assumed.
+   `--speculative-num-draft-tokens 4`.
+
+   **Tried, and it does not launch at this memory setting.** After loading, both
+   ranks refuse:
+
+   ```
+   ValueError: Loaded weights leave no GPU memory for the KV cache under
+   --mem-fraction-static=0.8. ... If using speculative decoding, draft weights
+   are now counted.
+   ```
+
+   That last clause is the whole story, and it is the same accounting that took
+   the pool from 600,000 to 145,024: a longer chain needs more draft state, and
+   at a 2-token budget the pool was already down to a quarter. So the ordering
+   in this list was wrong when it was written — a longer chain cannot be
+   measured until the pool has been bought back, because there is no room to put
+   it in. Do (1) first, then return here.
+
+   The failure was clean: both nodes came back to 117 GiB available with no
+   container and no process stuck in state D. The guard did its job and nothing
+   needed a power cycle.
 3. **The ReplaySSM verify path.** `enable_linear_replayssm_spec` defaults to
    False and was False for the run above. This model is 48 layers of mostly
    linear attention, and SGLang has a fold-every-commit verify valid only for a

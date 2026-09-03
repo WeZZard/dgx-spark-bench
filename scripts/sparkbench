@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Entry point for the harness. Resolves the repo root from its own location so
+# it works from any cwd and, more importantly, so `sparkbench measure` always
+# reaches the same canonical database rather than whichever `results/` happens
+# to be under the shell's working directory. The previous attempt opened
+# `results/runs.sqlite` by a relative path from six entry points and ended up
+# with two databases, neither of which was a superset of the other.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}"
+export SPARKBENCH_DB="${SPARKBENCH_DB:-$here/results/runs.sqlite}"
+exec python3 -m sparkbench.cli "$@"

@@ -91,6 +91,19 @@ args=(
   --max-num-batched-tokens "$DS_BATCHED_TOKENS"
   --gpu-memory-utilization "$DS_GPU_UTIL"
   --trust-remote-code
+  # Not optional, and not inferred. vLLM picks its executor backend in
+  # config/parallel.py in strict elif order: nnodes > 1 forces "mp"; failing
+  # that, `device_count() < world_size` RAISES. Each Spark presents one GPU
+  # and world_size is 2, so with --nnodes left at its default of 1 that branch
+  # fires and the server dies at config validation with "World size (2) is
+  # larger than the number of available GPUs (1) in this node". The later
+  # branch that would have chosen ray because a cluster is up is never
+  # reached, so building the Ray cluster is not by itself enough.
+  #
+  # And it has to be this flag rather than --nnodes 2: a few lines further on,
+  # nnodes > 1 is only allowed with mp, uni or external_launcher, so --nnodes 2
+  # would reject "ray" outright. Ray is what this launcher actually builds.
+  --distributed-executor-backend ray
 )
 if [ "$DS_SPEC" = "on" ]; then
   args+=( --speculative-config \

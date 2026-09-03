@@ -98,6 +98,21 @@ QWEN_SPEC="${QWEN_SPEC:-off}"
 QWEN_SPEC_STEPS="${QWEN_SPEC_STEPS:-1}"
 QWEN_SPEC_TOPK="${QWEN_SPEC_TOPK:-1}"
 QWEN_SPEC_DRAFT_TOKENS="${QWEN_SPEC_DRAFT_TOKENS:-2}"
+# ReplaySSM spec-verify. This model is a hybrid: 48 layers of which most are
+# linear attention (GDN) and the rest sparse full attention. Speculative verify
+# has to reconcile the recurrent state of the linear layers with a draft chain
+# that may be partly rejected, and SGLang has two paths for it -- a
+# fold-every-commit replay, valid only for a LINEAR draft chain
+# (speculative_eagle_topk in {None, 1}, which is exactly NEXTN/MTP), and a
+# slower recurrent fallback. Both default to False, so the first MTP run used
+# the fallback.
+#
+# This matters more as the draft chain grows: with a 2-token budget the verify
+# is cheap either way, but acceptance measured 1.88-1.91 out of a maximum 2.0,
+# so the budget is saturated and the next move is a longer chain. Turn these on
+# with the longer chain, not before, and measure them separately.
+QWEN_REPLAYSSM="${QWEN_REPLAYSSM:-off}"
+QWEN_REPLAYSSM_LEN="${QWEN_REPLAYSSM_LEN:-16}"
 QWEN_EXTRA="${QWEN_EXTRA:-}"
 
 # --- QSA long-context guard -------------------------------------------------
@@ -158,6 +173,13 @@ if [ "$QWEN_SPEC" != "off" ]; then
     --speculative-eagle-topk "$QWEN_SPEC_TOPK"
     --speculative-num-draft-tokens "$QWEN_SPEC_DRAFT_TOKENS"
   )
+  if [ "$QWEN_REPLAYSSM" = "on" ]; then
+    args+=(
+      --enable-linear-replayssm
+      --enable-linear-replayssm-spec
+      --linear-replayssm-cache-len "$QWEN_REPLAYSSM_LEN"
+    )
+  fi
 fi
 [ -n "$QWEN_KV_DTYPE" ] && args+=( --kv-cache-dtype "$QWEN_KV_DTYPE" )
 # shellcheck disable=SC2206

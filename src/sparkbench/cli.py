@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -141,6 +142,31 @@ def cmd_measure(a) -> int:
     return 0 if not failed else 1
 
 
+# The repo is public. CLAUDE.md: reports are scrubbed to node-a / node-b before
+# commit, and no secrets ever. The launcher flags are recorded verbatim because
+# they are the record of what was measured -- and they carry the fabric
+# addresses, so the report is where scrubbing has to happen. Doing it here
+# rather than by hand means it cannot be forgotten on the one report that gets
+# published.
+_SCRUB = [
+    (re.compile(r"\b10\.10\.10\.1\b"), "node-a-fast"),
+    (re.compile(r"\b10\.10\.10\.2\b"), "node-b-fast"),
+    (re.compile(r"\bspark-left-fast\b"), "node-a-fast"),
+    (re.compile(r"\bspark-right-fast\b"), "node-b-fast"),
+    (re.compile(r"\bspark-left\b"), "node-a"),
+    (re.compile(r"\bspark-right\b"), "node-b"),
+    # any other private-range address that slips into a flags string
+    (re.compile(r"\b192\.168\.\d{1,3}\.\d{1,3}\b"), "node-lan"),
+    (re.compile(r"/home/[a-z0-9_-]+/"), "/home/USER/"),
+]
+
+
+def scrub(text: str) -> str:
+    for pat, repl in _SCRUB:
+        text = pat.sub(repl, text)
+    return text
+
+
 def _config_of(notes: str | None) -> str:
     """The configuration tag a sweep stamped on its runs.
 
@@ -232,7 +258,7 @@ def cmd_report(a) -> int:
         out.append(f"Image: `{first['engine_image']}`  ")
         out.append(f"Flags: `{first['flags'] or '-'}`")
 
-    text = "\n".join(out)
+    text = scrub("\n".join(out))
     print(text)
     if a.out:
         with open(a.out, "w") as fh:

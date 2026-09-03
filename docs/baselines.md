@@ -69,12 +69,29 @@ explicit conservative `--mem-fraction-static`.
 
 ## Download path (2026-08-29, owner network context)
 
-Weights route through hf-mirror.com (`HF_ENDPOINT` in the node env), with
-DIRECT (non-VPN) rules on the gateway proxy for hf-mirror.com,
-modelscope.cn, aliyuncs.com and hf.co. Measured ~12 MB/s, zero VPN
-traffic. Plain huggingface.co is not reachable from the nodes without
-the VPN — the `hf.co` CDN hosts were silently consuming VPN traffic
-before this change.
+Weights route through hf-mirror.com, with DIRECT (non-VPN) rules on the
+gateway proxy for hf-mirror.com, modelscope.cn, aliyuncs.com and hf.co.
+Measured ~12 MB/s, zero VPN traffic. Plain huggingface.co is not
+reachable from the nodes without the VPN — the `hf.co` CDN hosts were
+silently consuming VPN traffic before this change.
+
+Corrected 2026-09-04. This section previously said `HF_ENDPOINT` was set
+"in the node env". It is not: it appears in no rc file on the head, and a
+non-interactive `ssh spark-left env` shows it unset. Whoever ran the
+earlier downloads set it on the command line. That is a trap rather than a
+detail — a script that assumes the env is already right downloads from
+huggingface.co over the VPN and never says so. Two more facts found the
+same way:
+
+- `hf` and `huggingface-cli` live in `~/.local/bin`, which is **not** on a
+  non-interactive ssh PATH. A download script that works when pasted into
+  a login shell fails from automation with "command not found".
+- `huggingface-cli` is deprecated in huggingface_hub 1.x (1.28.0 here) and
+  **no longer downloads at all**: it prints a warning and exits 0-ish
+  without fetching anything. `hf download` is the current form.
+
+`scripts/fetch-checkpoint.sh` pins all three — endpoint, PATH and CLI —
+rather than inheriting them.
 
 ## Incident 2026-08-31: the nine-hour zombie container
 

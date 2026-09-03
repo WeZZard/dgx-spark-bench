@@ -29,6 +29,9 @@ NAME="${3:?destination directory name under the model store}"
 STORE="${MODEL_STORE:-/home/station/models/hf}"
 DEST="$STORE/$NAME"
 
+# ~/.local/bin holds `hf` but is not on a non-interactive ssh PATH, so a
+# script that assumes an interactive shell finds no CLI at all.
+export PATH="$HOME/.local/bin:$PATH"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
 
@@ -58,10 +61,20 @@ echo "== free space   ${avail_gib} GiB"
 
 mkdir -p "$DEST"
 
-# --resume-download is the default in recent hf CLI; retries cover the
-# mirror dropping a connection mid-file, which it does.
+# `huggingface-cli` is deprecated in huggingface_hub 1.x and *no longer
+# works* -- it prints a deprecation warning and exits without downloading.
+# `hf` is the current entry point. Check rather than assume.
+HF_BIN="${HF_BIN:-hf}"
+command -v "$HF_BIN" >/dev/null || {
+  echo "refusing: '$HF_BIN' not found. huggingface-cli is deprecated and" >&2
+  echo "no longer downloads; install/point HF_BIN at the 'hf' CLI." >&2
+  exit 4
+}
+
+# Resume is the default; retries cover the mirror dropping a connection
+# mid-file, which it does.
 attempt=0
-until huggingface-cli download "$REPO" \
+until "$HF_BIN" download "$REPO" \
         --revision "$REV" \
         --local-dir "$DEST" \
         --max-workers 4; do

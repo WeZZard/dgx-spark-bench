@@ -58,7 +58,7 @@ cell() {
     --users "$users" \
     --max-tokens "$MAXTOK" \
     --flags "$FLAGS" \
-    --notes "$note" \
+    --notes "${CAMPAIGN_NOTE:+[$CAMPAIGN_NOTE] }$note" \
     || echo "!! cell failed: $workload @ $users (continuing)"
 }
 

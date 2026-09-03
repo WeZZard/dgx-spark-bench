@@ -56,6 +56,14 @@ GLM_RUNNING="${GLM_RUNNING:-8}"
 GLM_CTX="${GLM_CTX:-131072}"
 GLM_SPEC="${GLM_SPEC:-on}"
 GLM_SPEC_TOKENS="${GLM_SPEC_TOKENS:-8}"
+# Same fix as Qwen needed, for the same reason and found the same way: at load
+# time this build logs "FlashInfer TRTLLM MoE deferred finalize is disabled
+# (moe_runner_backend=auto, quant_method=ModelOptNvFp4FusedMoEMethod)" as though
+# it were routine, and then dies at the first forward pass with
+# "Unsupported moe_runner_backend for NVFP4 MoE". These are NVFP4 experts too,
+# so the auto-selection lands in the same place. Set it up front rather than
+# spending twenty minutes of weight loading to be told.
+GLM_MOE_BACKEND="${GLM_MOE_BACKEND:-flashinfer_cutlass}"
 GLM_EXTRA="${GLM_EXTRA:-}"
 
 echo "== rank $RANK: tearing down any previous $GLM_NAME"
@@ -86,6 +94,7 @@ args=(
   --max-running-requests "$GLM_RUNNING"
   --dsa-prefill-backend "$GLM_DSA"
   --dsa-decode-backend "$GLM_DSA"
+  --moe-runner-backend "$GLM_MOE_BACKEND"
 )
 [ "$GLM_EP" = "on" ] && args+=( --ep-size 2 )
 if [ "$GLM_SPEC" = "on" ]; then

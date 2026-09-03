@@ -41,6 +41,21 @@ wait_ready "$NAME" "$BASE" "$log" || exit 1
 
 bash scripts/check-rdma.sh "$NAME" || echo "(rdma check inconclusive; see above)"
 
+# Before: the loader checks, which are all that can be asked of a cold server.
+bash scripts/check-patch4.sh "$NAME" "$BASE" || {
+  echo "== refusing to measure: patch-4 preflight failed. Decode would run at" >&2
+  echo "   about half speed with output quality intact, which is exactly the" >&2
+  echo "   number this repo must not record." >&2
+  exit 1
+}
+
 CAMPAIGN_NOTE="$NOTE" bash scripts/campaign-deepseek.sh "$BASE"
+
+# After: the acceptance rate, which needs traffic and is the only one of the
+# three that observes the draft actually working. Not fatal here -- the cells
+# are already recorded -- but a failure means they must not be believed.
+echo "== patch-4 re-check, now that DSpark has had traffic"
+bash scripts/check-patch4.sh "$NAME" "$BASE" \
+  || echo "!! DSpark acceptance is in unpatched territory: the numbers above are suspect" >&2
 
 echo "== sweep '$NOTE' done $(date -Is)"

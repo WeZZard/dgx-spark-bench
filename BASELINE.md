@@ -23,6 +23,29 @@ result.
 | **decoding users** | how many requests were being served at once |
 | **KV pool** | the measured pool in tokens, which is what caps the users |
 
+## The chosen baseline, one configuration per model
+
+These are the configurations with the best published measured numbers on two
+DGX Sparks. They are the target to reproduce. Whether a format is "native" to
+the model is not a criterion here; the measured number is.
+
+| model | weight | KV cache | engine | users | KV pool | best published |
+|---|---|---|---|---:|---:|---|
+| DeepSeek-V4-Flash-Vision-Exp | NVFP4 | `nvfp4_ds_mla`, block 256 | vLLM 0.25.2.dev0 + DSpark k=5-6 | 6 | 2.79-3.07M | **84.3 tok/s** peak single-stream, **197.3** aggregate at 6 |
+| Qwen3.8-Flash-Next | NVFP4 | `--max-mamba-cache-size 97` | SGLang `radixark/sglang-qwen38flashnext:sm121-qsa-mrope1` | 6 | 600,000 pinned | **69.7 tok/s** peak single-stream |
+| GLM-5.3-Flash | LibertAIDAI NVFP4 | **fp8** (SGLang PR #36904) | SGLang PR #36507 + #36904 + DFlash2 drafter | 8 | mamba-governed | **37.3 tok/s** single-stream, **83.5** aggregate at 12 |
+
+For GLM there is a second path with a much larger pool but slower single
+streams — EXL3 4bpw weights with a 288-byte-a-token NVFP4 KV cache reaching a
+2,196,850-token pool and 67.6 tok/s aggregate 12-way. Measure it only after
+the SGLang path above is reproduced.
+
+Every published figure in this file is a **decode rate**. This project reports
+**served rate**. Do not put them in one table until a matching short-prompt
+cell has been measured here; see rule 2 in `CLAUDE.md`.
+
+The full detail for each configuration follows.
+
 ## DeepSeek-V4-Flash-Vision-Exp
 
 | field | value |

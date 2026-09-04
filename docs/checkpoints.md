@@ -232,3 +232,53 @@ scale bytes and names the format. It prints `OK` only when the derived block
 size matches the one that dtype implies, so a checkpoint that has been
 repacked, truncated or mixed shows up as `UNEXPECTED` rather than being taken
 on trust.
+
+## The engine here cannot load Vision-Exp, and that was cheap to establish
+
+Downloading 156 GiB to find out whether it serves would be the expensive way
+round. The image already on the nodes answers it.
+
+`vllm-dsv4:ray` registers `DeepseekV4ForCausalLM` to
+`vllm.models.deepseek_v4`, and that class loads weights through
+
+```python
+def load_weights(self, weights):
+    loader = AutoWeightsLoader(self, skip_substrs=["mtp."])
+    loaded_params = loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+```
+
+`AutoWeightsLoader` raises on any name it cannot place —
+`vllm/model_executor/models/utils.py:389`, *"There is no module or parameter
+named {prefix!r}"* — unless the name matches `skip_substrs`, which here is
+`mtp.` and nothing else. The inner `DeepseekV4Model.load_weights` ends its
+dispatch chain on a bare `param = params_dict[name]`, so an unplaceable name
+is a `KeyError` there rather than a skip.
+
+Vision-Exp's 316 extra tensors are:
+
+| group | n | placeable in `DeepseekV4ForCausalLM`? |
+|---|---|---|
+| `vision.*` (44-block ViT) | 259 | no |
+| `layers.N.ffn.gate.bias_vl` | 43 | no |
+| `aligner.w{1,2}.{weight,bias}` | 4 | no |
+| `image_{start,end,pad,newline}` | 4 | no |
+| `mtp.N.ffn.gate.bias_vl` | 3 | yes — `mtp.` is skipped |
+| `layers.{0,1}.ffn.gate.bias` | 3 | no |
+
+So 313 of the 316 are fatal. **This build cannot load the checkpoint.**
+
+`bias_vl` is the one worth pausing on, because it is not a bolt-on. It is a
+*second expert-routing bias, on all 43 layers*, alongside the `bias` that
+`0731` also has — a separate MoE route for image tokens. Vision-Exp is not the
+text model plus a tower; the vision path reaches into routing in every layer.
+That is consistent with the tensor hashes differing, and it is a second reason
+not to read `0731`'s numbers as Vision-Exp's.
+
+It also says what a text-only load would have to do: skip `vision.`,
+`aligner.`, `image_` and `.bias_vl`, leaving the `bias` route that text tokens
+use and that is present in both checkpoints. That is a `skip_substrs` change —
+a derived image, in the pattern of `sglang-glm53:gb10-tilelang` and
+`vllm-dsv4:ray` — and any tuple it produces must record in its flags that the
+vision tower was not loaded. Which is the honest form of the comparison
+anyway: `BASELINE.md` establishes that the published 84.3 / 197.3 figures are
+text throughput, not a vision result.

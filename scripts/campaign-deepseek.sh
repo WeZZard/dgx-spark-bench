@@ -19,7 +19,14 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/warmup.sh"
 BASE="${1:-http://127.0.0.1:8888}"
-IMAGE="${DS_IMAGE:-vllm-dsv4:ray}"
+# Read the image off the RUNNING container rather than repeating the
+# launcher's default here. Those two defaults drifted the moment the GLM
+# launcher moved to the patched sglang-glm53:gb10-tilelang image: the server
+# ran the patched image and the database recorded the base one, which is
+# precisely the confusion the separate tag was built to prevent. `docker
+# inspect` cannot drift.
+IMAGE="$(docker inspect --format '{{.Config.Image}}' "${DS_NAME:-vllm_dsv4}" 2>/dev/null)"
+IMAGE="${IMAGE:-${DS_IMAGE:-unknown-image}}"
 MODEL_DIR="${DS_MODEL_DIR:-/home/station/models/hf/dsv4-flash-fp8}"
 MODEL_ID="${DS_MODEL_ID:-deepseek-ai/DeepSeek-V4-Flash-0731}"
 CONTAINER="${DS_NAME:-vllm_dsv4}"

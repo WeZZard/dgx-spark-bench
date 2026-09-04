@@ -53,9 +53,9 @@ DS_HOST_IP="${DS_HOST_IP:-$( [ "$RANK" = 0 ] && echo 10.10.10.1 || echo 10.10.10
 # nvidia NVFP4 one carries the same 138.00 GiB of 4-bit weights re-blocked to
 # 16 (docs/checkpoints.md). Switching between them is the cleanest available
 # test of whether the MoE kernel path, not weight bandwidth, is the difference.
-DS_MODEL="${DS_MODEL:-$( [ "$RANK" = 0 ] \
-    && echo /home/station/models/hf/dsv4-flash-fp8 \
-    || echo /mnt/models/hf/dsv4-flash-fp8 )}"
+# One path for both ranks -- see the mounts block below for why. This is the
+# container path; the host directory behind it differs per rank.
+DS_MODEL="${DS_MODEL:-/home/station/models/hf/dsv4-flash-fp8}"
 
 DS_KV_DTYPE="${DS_KV_DTYPE:-fp8_ds_mla}"
 DS_MAX_LEN="${DS_MAX_LEN:-262144}"
@@ -78,7 +78,12 @@ NEED_GIB="${DS_NEED_GIB:-95}"
 echo "== rank $RANK: container cap ${CAP_GIB}GiB, need ${NEED_GIB}GiB free"
 wait_for_free_memory "$NEED_GIB"
 
-[ -d "$DS_MODEL" ] || { echo "rank $RANK: $DS_MODEL not readable" >&2; exit 6; }
+# DS_MODEL is a CONTAINER path and only rank 0 has it on the host; the
+# worker's host copy is checked in the mounts block below, where the
+# per-rank source directory is chosen.
+if [ "$RANK" = 0 ] && [ ! -d "$DS_MODEL" ]; then
+  echo "rank $RANK: $DS_MODEL not readable" >&2; exit 6
+fi
 
 args=(
   --model "$DS_MODEL"
@@ -112,9 +117,40 @@ fi
 # shellcheck disable=SC2206
 [ -n "$DS_EXTRA" ] && args+=( $DS_EXTRA )
 
+# Every rank must see the checkpoint at the SAME container path, and that
+# path is the HEAD's. Under Ray only the head runs `vllm serve`; the model
+# path it was given is propagated to the workers, which never consult their
+# own DS_MODEL. Getting this wrong does not fail fast -- the cluster forms,
+# both ranks initialise NCCL, rank 0 starts reading its 48 shards, and only
+# then does rank 1 say
+#
+#   Failed to get file list for '/home/station/models/hf/dsv4-flash-fp8'
+#   Error retrieving file list: Repo id must be in the form 'repo_name'...
+#
+# because with no such local directory vLLM falls back to treating the path
+# as a Hugging Face repo id. The worker's /home/station/models exists but is
+# an EMPTY directory, so the old `[ -d ... ]` test passed and mounted
+# nothing useful.
+#
+# The worker holds a complete local copy under models-local (48 shards, same
+# as the head), so prefer it: identical paths and local NVMe instead of NFS
+# for 156 GiB of weights. Fall back to the NFS mount of the head's store.
 mounts=()
-[ -d /home/station/models ] && mounts+=( -v /home/station/models:/home/station/models:ro )
-ls /mnt/models >/dev/null 2>&1 && mounts+=( -v /mnt/models:/mnt/models:ro )
+if [ "$RANK" = 0 ]; then
+  [ -d /home/station/models/hf ] || { echo "rank 0: /home/station/models/hf missing" >&2; exit 7; }
+  mounts+=( -v /home/station/models:/home/station/models:ro )
+else
+  if [ -d "/home/station/models-local/$(basename "$DS_MODEL")" ]; then
+    echo "== rank $RANK: serving weights from the local copy (models-local)"
+    mounts+=( -v /home/station/models-local:/home/station/models/hf:ro )
+  elif [ -d "/mnt/models/hf/$(basename "$DS_MODEL")" ]; then
+    echo "== rank $RANK: serving weights over NFS (/mnt/models)"
+    mounts+=( -v /mnt/models/hf:/home/station/models/hf:ro )
+  else
+    echo "rank $RANK: no copy of $(basename "$DS_MODEL") in models-local or /mnt/models" >&2
+    exit 7
+  fi
+fi
 
 rdma_report
 read -r -a RDMA_ARGS <<< "$(rdma_docker_args)"

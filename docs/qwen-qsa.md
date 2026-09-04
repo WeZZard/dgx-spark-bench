@@ -83,3 +83,69 @@ published `--context-length 262144`.
 rebuilt. That is a build project, not a flag, and it is worth doing only if the
 ladder above shows the corruption is real on this hardware and is costing
 useful context. Measure first.
+
+## The same kernel refuses an fp8 KV cache, and takes the server with it
+
+`--kv-cache-dtype fp8_e4m3` is the obvious thing to want here: measured on
+this checkpoint it doubles the KV pool, 166,016 tokens to **332,480** at the
+same `--max-total-tokens 600000`. The `[mtp+fp8kv]` campaign in `REPORT.md`
+is what happened when it was tried.
+
+Short and single-user cells served normally — 23.7 tok/s at `short @ 1`,
+84.0 at `code @ 6`, 21.8 at `agentic-4k @ 1`, all with 100% needle
+retrieval. Then `agentic-4k @ 6 users` killed the server:
+
+```
+[2026-09-03 23:03:16 TP0] Prefill batch, #new-seq: 1, #new-token: 4352, ... #queue-req: 2
+[2026-09-03 23:03:18 TP1] Scheduler hit an exception: Traceback (most recent call last):
+  File ".../triton/language/semantic.py", line 1500, in dot
+    assert rhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32,
+AssertionError: Unsupported rhs dtype fp8e4nv
+[2026-09-03 23:03:18] kill_process_tree called: parent_pid=1, include_parent=True, pid=1
+```
+
+The frame below the assertion is
+`srt/layers/attention/qsa/sparse_attn.py:275`, in
+`sparse_gqa_fwd_interface_triton_ck` — the QSA chunked-prefill kernel. Both
+remaining cells of that campaign then failed for the ordinary reason that
+there was no longer a server, which is why the config has 7 rows and not 9.
+
+This is not a tuning problem, and the reason is legible in
+`srt/layers/attention/qwen_sparse_attn_backend.py`. `forward_extend` picks
+between two kernels on one condition:
+
+```python
+if not any(prefix_lens):
+    output = sparse_gqa_fwd_interface_triton(q, k[:num_valid_rows], v[:num_valid_rows], ...)
+    return self._pad_extend_output(output, num_output_rows)
+
+# otherwise: "The validated chunk-prefill kernel consumes tightly packed
+# full-context K/V."
+k_buffer = pool.get_key_buffer(layer.layer_id)
+v_buffer = pool.get_value_buffer(layer.layer_id)
+...
+output = sparse_gqa_fwd_interface_triton_ck(q, torch.cat(k_parts), torch.cat(v_parts), ...)
+```
+
+With no prefix, `k` and `v` are the freshly projected tensors in the layer's
+own dtype — bfloat16 — and Triton's `tl.dot` accepts them. With any prefix,
+the `_ck` kernel reads K/V **straight out of the paged pool**, and the pool
+is whatever `--kv-cache-dtype` made it. Set it to fp8 and `tl.dot` is handed
+an `fp8e4nv` right-hand side that this Triton build does not accept.
+
+So the trigger is not concurrency as such: it is a non-zero prefix length,
+which is exactly what chunked prefill produces from the second chunk onward.
+`chunked_prefill_size` is 8192. Every cell that survived had a prompt that
+fit in one chunk; the 6-user cell had three 3,891-token prompts contending
+for that budget and one of them was split.
+
+The prediction that follows is that **a single 33k-token prompt would crash
+it too**, with no concurrency at all, because 30,301 tokens cannot be one
+chunk. That cell was never measured — the server was already dead when the
+campaign reached it.
+
+The operational conclusion does not depend on settling that: an fp8 KV cache
+on this build is unusable for the long-prompt work this project exists to
+measure, and it fails by killing the process rather than by degrading. Every
+Qwen number in `REPORT.md` from `[qwen-rdma-mtp-eos]` onward is bfloat16 KV
+for this reason, at half the KV pool.

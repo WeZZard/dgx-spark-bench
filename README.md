@@ -38,24 +38,28 @@ HCA's own `rx_write_requests` counter rather than from a log.
 comparable, since GLM's ladder runs to 8 users and DeepSeek's and Qwen's to
 6, each matching its own published concurrency, and users is a tuple field:
 
-| workload | DeepSeek-V4-Flash-0731 | Qwen3.8-Flash-Next | GLM-5.3-Flash |
-|---|---:|---:|---:|
-| short prompt | **44.1** | 26.5 | 10.3 |
-| code | **32.8** | 23.9 | 10.0 |
-| agentic, 4k context | **26.2** | 22.7 | 9.7 |
-| agentic, 33k context | **13.9** | 11.0 | 7.3 |
+| workload | DeepSeek-V4-Flash-0731 | Qwen3.8-Flash-Next | GLM-5.3-Flash | lead |
+|---|---:|---:|---:|---:|
+| short prompt | **44.1** | 26.5 | 10.3 | 1.66x |
+| code | **32.8** | 23.9 | 10.0 | 1.37x |
+| agentic, 4k context | 26.2 | 22.7 | 9.7 | 1.15x |
+| agentic, 33k context | 13.9 | 11.0 | 7.3 | 1.26x |
 
 At each model's own published concurrency:
 
-| workload | DeepSeek @ 6 | Qwen @ 6 | GLM @ 8 |
-|---|---:|---:|---:|
-| short prompt | 89.6 | **96.6** | – |
-| code | 40.2 | **87.3** | 45.7 |
-| agentic, 4k context | **54.6** | 43.4 | 24.4 |
-| agentic, 33k context | **17.7** | 11.2 | 13.5 |
+| workload | DeepSeek @ 6 | Qwen @ 6 | GLM @ 8 | lead |
+|---|---:|---:|---:|---:|
+| short prompt | 89.6 | 96.6 | – | 1.08x |
+| code | 40.2 | **87.3** | 45.7 | 1.91x |
+| agentic, 4k context | 54.6 | 43.4 | 24.4 | 1.26x |
+| agentic, 33k context | **17.7** | 11.2 | 13.5 | 1.31x |
 
-Served rate throughout. Full six-field tuples, with the KV pool each was
-measured against, are in `REPORT.md` — generated, never hand-edited.
+Served rate throughout. **Lead** is the top cell over the runner-up, and only
+the bold ones clear the 1.3x that one server reads differently by when the
+same campaign is repeated against it (see the end of this file). In the four
+unbolded rows the leader is not separated from the model behind it by this
+data, and the 1.31x row only just is. Full six-field tuples, with the KV pool
+each was measured against, are in `REPORT.md` — generated, never hand-edited.
 
 The configurations behind those numbers, and why each differs from the
 published one:
@@ -122,14 +126,28 @@ the driver allocates and an unproven launcher once needed a power cycle.
 
 Two things worth knowing before reading any number here:
 
-- **The first campaign after a load reads low, and the gap grows with
-  concurrency.** Repeating one GLM campaign three times against an unchanged
-  server moved 8-user code from 31.5 to 44.2 to 44.9 tok/s while 1-user moved
-  9.9 to 10.0 to 10.6. The warmup now includes a concurrent burst as well as
-  long prompts, which reduces but does not eliminate it.
+- **Repeating a campaign against an unchanged server moves cells by up to
+  1.3x, and not in a consistent direction.** Two `--ignore-eos` passes over
+  one GLM server, nothing restarted between them, read higher the second time
+  in 8 of 9 cells, most at concurrency: 8-user code 36.3 → 45.7 tok/s, while
+  every 1-user cell moved by 0.7 or less. The same treatment of one Qwen
+  server went the *other* way in 7 of 9 cells, most at concurrency again:
+  6-user short 96.6 → 65.2 tok/s. Decode rate moved with it there (16.8 →
+  11.2), so that one is not a queueing artefact, and time-to-first-token
+  actually improved (1,336 → 640 ms) while served rate fell by a third.
+  The cause is not established. An earlier version of this section read the
+  GLM half of that as a warm-up effect and generalised it; Qwen contradicts
+  it, so the honest statement is the spread, not a direction. **Two cells
+  that differ by less than about 1.3x are not separated by this data.**
 - **Some concurrent cells are genuinely noisy.** DeepSeek's 6-user short-prompt
   cell read 41.2, 101.8 and 89.6 tok/s across three samples with identical
   token counts and no GPU throttling (clocks steady at ~690 MHz, 51 °C).
+
+The three-sample repeats predate `--ignore-eos` and cannot be used to size
+this, because output length varied between samples and served rate divides by
+it — one DeepSeek prose cell emitted 512, 144 and 512 tokens for 46.0, 18.1
+and 36.2 tok/s. Only the paired `--ignore-eos` passes above hold the
+denominator fixed.
 
 ## Licence
 

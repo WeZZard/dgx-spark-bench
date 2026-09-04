@@ -90,6 +90,12 @@ Findings, each written up with the evidence that supports it:
   label. Vision-Exp was settled without downloading it, by reading its 48
   safetensors headers over HTTP — eight megabytes against 156 GiB.
   `docs/checkpoints.md`, `scripts/audit-remote-checkpoint.py`.
+- **Vision-Exp holds every one of `0731`'s 72,317 tensor names, and none of
+  its weights.** Identical dtypes, identical byte counts, 316 extra tensors
+  for the vision tower — and every sampled expert tensor hashes differently,
+  at layers 3, 20 and 40. Same architecture, same quantization, separately
+  trained. So the `0731` numbers here are not Vision-Exp numbers, however
+  much the structure invites that shortcut. `scripts/compare-checkpoints.py`.
 - **The container could not see the RDMA devices**, so a 200 GbE link
   cross-connected between the two nodes was carrying NCCL over TCP. Fixing it
   was worth 1.74x across every cell measured. `docs/interconnect.md`.

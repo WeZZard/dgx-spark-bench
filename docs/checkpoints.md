@@ -128,6 +128,48 @@ byte traffic, and DSpark acceptance varies from ~34% on prose to ~78% on
 structured code on the published figures alone. `VLLM_USE_B12X_MOE` and the
 measured acceptance rate are the two things to separate.
 
+### It is the same architecture, and it is not the same weights
+
+The audit above invites a much stronger conclusion than it supports, and the
+temptation is worth naming because acting on it would be a Rule 1 violation
+with a large payoff attached. Vision-Exp contains **every one of `0731`'s
+72,317 tensor names**, at identical dtypes and identical byte counts, and adds
+316 more:
+
+```
+### dsv4-flash-fp8  vs  deepseek-ai/DeepSeek-V4-Flash-Vision-Exp@86f746b36186
+    shared names 72317   local-only 0   remote-only 316
+    remote-only prefixes: {'vision': 259, 'layers': 46, 'aligner': 4, 'mtp': 3,
+                           'image_newline': 1, 'image_start': 1,
+                           'image_pad': 1, 'image_end': 1}
+```
+
+That is exactly the shape of "the text model with a vision tower bolted on",
+and if it were true then this project's `0731` measurements would *be*
+Vision-Exp measurements for text work, and the largest reproduction gap in
+`BASELINE.md` would close without measuring anything.
+
+It is not true. `scripts/compare-checkpoints.py` hashes the shared tensors —
+each costs its own size over an HTTP range request, twelve megabytes for four
+of them — and every one differs:
+
+```
+   layers.3.ffn.experts.0.w1.weight
+      local        I8    4,194,304 B  a40fb64af3da643c01af3abb1774286d
+      remote       I8    4,194,304 B  ac5ebb0a9e3e574fe1c194b6a491717d   DIFFERENT
+   layers.20.ffn.experts.7.w2.weight    ... DIFFERENT
+   layers.40.ffn.experts.255.w3.weight  ... DIFFERENT
+   layers.3.ffn.experts.0.w1.scale      ... DIFFERENT
+-- 0 identical, 4 different --
+```
+
+Sampled at layers 3, 20 and 40 and at expert indices 0, 7 and 255, so a
+checkpoint differing only in its last layers or its rarely-routed experts
+could not have passed. Shared names and shared byte counts mean a shared
+architecture and a shared quantization; they do not mean a shared checkpoint.
+`0731` is not Vision-Exp, which is what Rule 1 says, now shown rather than
+asserted.
+
 One serving fact came out of the same eight megabytes. Vision-Exp's top-level
 `config.json` declares `"architectures": ["DeepseekV4ForCausalLM"]`,
 `model_type: deepseek_v4` — a text causal LM. The vision tower lives in the

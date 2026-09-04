@@ -109,3 +109,43 @@ fp8. Under rule 1 that is a different tuple and must never be set beside
 the fp8 row as though tuning explained the gap. The reason it is bf16 is
 not a choice; it is the only combination this checkpoint's architecture
 leaves available on GB10.
+
+## Outcome
+
+`bf16 KV + tilelang`, with the GB10 block_I tuning built into
+`sglang-glm53:gb10-tilelang`, serves. Ready in 1,335 s from a cold start;
+KV pool 800,448 tokens at bf16; RoCE confirmed from the HCA's own counters
+during the campaign; zero failed requests and 100% verbatim needle
+retrieval in every agentic cell, including 26,535-token prompts at eight
+concurrent users.
+
+So the sequence of three failures was not a dead end but a search, and the
+thing the sources reported as a GB10 fix is the thing that works:
+
+| attempt | KV | DSA backend | outcome |
+|---|---|---|---|
+| 1 | fp8_e4m3 | flashinfer_sparse_mla (pinned by me) | arch-gated: rejects glm5_next |
+| 2 | fp8_e4m3 | trtllm (auto-detected) | TllmGenFmhaRunner: unsupported architecture |
+| 3 | bfloat16 | tilelang (stock image) | shared memory 169,984 B > 101,376 B |
+| 4 | bfloat16 | tilelang (patched image) | **serves** |
+
+Attempts 1-3 cost about 17 minutes of weight loading each. Attempt 4 was
+found in about a minute, by compiling the kernel standalone at the model's
+real shapes instead of launching the server to ask it.
+
+## What this costs, and what is still open
+
+The tuning is not free. `block_I` halves from 64 to 32, so the sparse
+attention kernel processes half as many index columns per block. That is
+the most likely reason single-stream throughput sits near 10 tok/s against
+the published 14.5 (a decode rate, and therefore not directly comparable --
+rule 2). Whether a larger `block_I` can be recovered by trading something
+else in the tile is untested.
+
+Also untested here: DFlash2 speculation. The sources' headline 37.3 tok/s
+is with it, and this configuration turns it off, so the numbers recorded
+under `glm-tilelang-bf16-nospec*` are the no-speculation ladder and must
+not be set beside a figure that used a drafter. Shared memory in this
+kernel depends on `block_I`, `dim` and `threads` rather than on batch or
+sequence length, so the verify width should not by itself reintroduce the
+overflow -- the standalone harness ran an 8-token batch without trouble.

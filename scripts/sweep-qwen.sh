@@ -73,7 +73,29 @@ wait_ready "$NAME" "$BASE" "$log" || exit 1
 # measured.
 rdma_before="$(bash scripts/check-rdma.sh --snapshot 2>/dev/null || echo "")"
 
-CAMPAIGN_NOTE="$NOTE" bash scripts/campaign-qwen.sh "$BASE"
+# SWEEP_REPEATS: run the campaign N times against ONE unchanged server.
+#
+# Every headline number in this repo is a single sample, and the README's
+# claim that repeating a campaign moves cells "by up to 1.3x" was measured
+# across server RESTARTS. Two DeepSeek sweeps with identical flags then
+# disagreed by 2.44x on `agentic-4k @ 6` -- on the workload family the whole
+# project is about -- so that bound is wrong and its size is unknown.
+#
+# Restarting conflates two sources: what varies inside one server (scheduling,
+# KV fragmentation, thermal state) and what varies between loads (kernel
+# autotuning, pool size, memory layout). Repeating against the same process
+# isolates the first, and the difference against a fresh sweep gives the
+# second. Cells are noted `<NOTE>-s1`, `-s2`, ... so they stay separable in
+# the database rather than averaging into one indistinguishable pile.
+REPEATS="${SWEEP_REPEATS:-1}"
+if [ "$REPEATS" -eq 1 ]; then
+  CAMPAIGN_NOTE="$NOTE" bash scripts/campaign-qwen.sh "$BASE"
+else
+  for i in $(seq 1 "$REPEATS"); do
+    echo "== campaign sample $i of $REPEATS, same server, no restart"
+    CAMPAIGN_NOTE="$NOTE-s$i" bash scripts/campaign-qwen.sh "$BASE"
+  done
+fi
 
 
 # The RoCE verdict, over the whole campaign. Not fatal: the cells are recorded

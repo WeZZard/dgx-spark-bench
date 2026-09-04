@@ -22,19 +22,29 @@ Every result is recorded as a six-field tuple — model, weight, KV cache,
 engine, decoding users, KV pool — because a throughput number without those
 fields cannot be compared with anything.
 
-Every cell here is generated with `--ignore-eos`, so each request emits
-exactly 512 tokens. Without that, served rate moves with how long the answer
-happened to be: four samples of one DeepSeek cell produced 179, 266, 279 and
-512 tokens and read 5.8, 8.1, 8.3 and 13.9 tok/s, while time-to-first-token
-stayed flat within 2%. Same work, different denominator. `REPORT.md` prints
-the output-token count beside every row so incomparable rows are visible.
+Every cell in the tables below is generated with `--ignore-eos`, so each
+request emits exactly 512 tokens. Without that, served rate moves with how
+long the answer happened to be: four samples of one DeepSeek cell produced
+179, 266, 279 and 512 tokens and read 5.8, 8.1, 8.3 and 13.9 tok/s, while
+time-to-first-token stayed flat within 2%. Same work, different denominator.
+
+`REPORT.md` holds earlier configurations that predate that flag, and two
+correctness probes run at 64 tokens, so it prints the output-token count
+beside every row. Rows with different counts in that column are not
+comparable on served rate and are not meant to be.
 
 ## Status
 
-All three models serve on the pair. Zero failed requests and 100% verbatim
-needle retrieval in every agentic cell, including 26,500-token prompts at
-full concurrency. NCCL over RoCE, confirmed during each campaign from the
-HCA's own `rx_write_requests` counter rather than from a log.
+All three models serve on the pair. In the three shipped configurations
+below: zero failed requests, and 100% verbatim needle retrieval in every
+agentic cell, including 26,500-token prompts at full concurrency. NCCL over
+RoCE, confirmed during each campaign from the HCA's own `rx_write_requests`
+counter rather than from a log.
+
+Configurations that did *not* work are in `REPORT.md` too, with their
+failures — an fp8 KV cache on Qwen serves short prompts and then kills the
+server on the first chunked one (`docs/qwen-qsa.md`), and three GLM sparse-
+attention backends never reached a forward pass (`docs/glm-dsa.md`).
 
 **One decoding user** — the only cells where the three are directly
 comparable, since GLM's ladder runs to 8 users and DeepSeek's and Qwen's to

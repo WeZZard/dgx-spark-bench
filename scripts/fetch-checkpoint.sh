@@ -65,6 +65,44 @@ echo "== free space   ${avail_gib} GiB"
 
 mkdir -p "$DEST"
 
+# ONE FETCH PER DESTINATION, ENFORCED.
+#
+# Two fetches writing the same directory do not share the work, they destroy
+# it: each `hf download` treats the other's .incomplete files as its own,
+# and the loser's partials are discarded. On 2026-09-04 this happened by
+# accident and cost hours. The sequence is worth knowing because it looks
+# reasonable at every step:
+#
+#   1. A fetch was running and looked slow.
+#   2. Its `hf` child was killed by PID, to restart with more workers.
+#   3. The SCRIPT survived -- the retry loop below catches a failed child and
+#      spawns another -- so killing the child restarted it rather than
+#      stopping it.
+#   4. A second fetch was then started, and from that moment two scripts wrote
+#      the same destination for two and a half hours.
+#
+# The visible symptoms all pointed elsewhere: "Temporary failure in name
+# resolution" from the contention, a destination that shrank from 12 GB to
+# 5 GB, and a throughput comparison between "4 workers" and "16 workers" that
+# was really 4 against 20-in-two-processes and is therefore worthless.
+#
+# Killing the child is not stopping the fetch. Kill the script.
+LOCK="$DEST/.fetch.lock"
+if [ -e "$LOCK" ]; then
+  other="$(cat "$LOCK" 2>/dev/null || echo "")"
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    echo "refusing: a fetch for $DEST is already running as PID $other." >&2
+    echo "  To stop it:      kill $other        # the SCRIPT, not its hf child" >&2
+    echo "  To watch it:     tail -f the log it was started with" >&2
+    echo "  A second fetch would discard this one's partial files." >&2
+    exit 5
+  fi
+  echo "== stale lock from PID ${other:-unknown} (not running); taking over"
+fi
+echo $$ > "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
+
+
 # `huggingface-cli` is deprecated in huggingface_hub 1.x and *no longer
 # works* -- it prints a deprecation warning and exits without downloading.
 # `hf` is the current entry point. Check rather than assume.
@@ -78,33 +116,27 @@ command -v "$HF_BIN" >/dev/null || {
 # Resume is the default; retries cover the mirror dropping a connection
 # mid-file, which it does.
 attempt=0
-# hf-mirror rate-limits PER CONNECTION, not per client, so the old
-# --max-workers 4 left most of the link idle. Measured on the Vision-Exp
-# fetch, same file set, minutes apart:
+# WORKER COUNT: the honest state of the evidence is that it has not been
+# measured cleanly, and the two attempts recorded here were both wrong.
 #
-#    4 workers:    240 MB in 60s              =  4.0 MB/s
-#   16 workers:  2,640 MB in 60s              = 44.0 MB/s   <- burst
-#   16 workers:  2,770 MB in 60s              = 46.2 MB/s   <- burst
-#   16 workers:  3,960 MB in 176s             = 22.5 MB/s   <- sustained
+# What was measured, and why none of it is a controlled comparison:
 #
-# THE 60-SECOND NUMBERS ARE BURSTS AND THE 176-SECOND ONE IS THE HONEST
-# FIGURE. A short window lands in a clean stretch; a longer one includes the
-# retry stalls, and the sustained rate is about half the burst. 5.6x over four
-# workers is the real gain, not the 11x a single minute suggests. Do not quote
-# a one-minute sample of this as throughput.
+#    4 workers:    240 MB in 60s  =  4.0 MB/s   one fetch running
+#   16 workers:  2,640 MB in 60s  = 44.0 MB/s   TWO fetches running
+#   16 workers:  3,960 MB in 176s = 22.5 MB/s   TWO fetches running
+#   16 workers:  5,920 MB in 240s = 24.0 MB/s   TWO fetches running
 #
-# The second reason to distrust bursts here: **a failure discards whatever is
-# in flight.** DNS through this path flaps under load -- five
-# "[Errno -3] Temporary failure in name resolution" in one fetch -- and each
-# abort throws away the partial files. The destination directory was observed
-# going from 12 GB to 5 GB across one such episode. More workers means more
-# in flight, so it also means a larger loss per event; 16 is what was
-# measured, and 8 is plausibly the better trade on an unreliable path but has
-# not been measured here.
+# Every 16-worker figure was taken while a second fetch script was also
+# downloading the same checkpoint, unnoticed, so they measure roughly twenty
+# workers split across two processes that were destroying each other's
+# partial files. The "11x from one flag" this script claimed, and the "5.6x"
+# it was corrected to, are both artefacts. The only clean number here is the
+# 4-worker one.
 #
-# Restarting the fetch also discards in-flight partials, so a restart to
-# "tune" the worker count is not free -- it costs whatever was in flight.
-# Completed files always resume.
+# 16 is kept as the default because more connections plausibly helps on a
+# per-connection-limited mirror, not because it was demonstrated. Measure it
+# properly -- one fetch, from scratch, on a quiet link -- before quoting a
+# figure for it.
 FETCH_WORKERS="${FETCH_WORKERS:-16}"
 echo "== workers       $FETCH_WORKERS"
 until "$HF_BIN" download "$REPO" \

@@ -262,7 +262,7 @@ Vision-Exp's 316 extra tensors are:
 | `layers.N.ffn.gate.bias_vl` | 43 | no |
 | `aligner.w{1,2}.{weight,bias}` | 4 | no |
 | `image_{start,end,pad,newline}` | 4 | no |
-| `mtp.N.ffn.gate.bias_vl` | 3 | yes — `mtp.` is skipped |
+| `mtp.N.ffn.gate.bias_vl` | 3 | in the target, yes — `mtp.` is skipped. In the draft model, **no**; see below |
 | `layers.{0,1,2}.ffn.gate.bias` | 3 | no — hash-MoE layers have no router bias |
 
 So 313 of the 316 are fatal. **This build cannot load the checkpoint.**
@@ -322,6 +322,32 @@ ends `.bias_vl`.
 `config.num_hash_layers` instead of hard-coding them, and
 `scripts/build-vllm-dsv4-textonly.sh` fails the build if the pre-mapper
 spelling reappears — the check that would have caught this before the load.
+
+### There are two loaders, and the draft one has no skip list
+
+With that fixed the target model loaded all 48 shards, and the bring-up failed
+anyway, 18 minutes later, on `KeyError: 'model.layers.0.ffn.gate.bias_vl'` —
+this time from `vllm/models/deepseek_v4/nvidia/dspark.py:502`, reached through
+`Speculator.load_model` → `load_dspark_model`.
+
+`DeepseekV4DSpark.load_weights` does not use `AutoWeightsLoader`. It walks the
+same weight iterator itself, maps each name through `_remap_dspark_name` and
+ends on a bare `param = params_dict[name]`. `_remap_dspark_name` returns
+`None` for anything that is not `mtp.{i}.*`, so the ViT, the aligner, the
+image tokens and all 43 `layers.N.ffn.gate.bias_vl` are dropped for free — and
+the three `mtp.{i}.ffn.gate.bias_vl` are rewritten to
+`model.layers.{i}.ffn.gate.bias_vl` and looked up in a draft model that has no
+vision routing bias either.
+
+So the row above that reads "yes — `mtp.` is skipped" is true of the target
+model and false of the draft, and that is the general shape of the trap: the
+target loading cleanly is not evidence about the draft, because the draft is
+loaded afterwards, from the same files, by different code. The patch adds a
+`.bias_vl` skip to `dspark.py` as well, and the build check now asserts on
+both files rather than on the one that failed first.
+
+This only bites with speculation on. A `DS_SPEC=off` run of Vision-Exp would
+have loaded on the first fixed image and left the second defect in place.
 
 That skip is the one that removes a routing input rather than a modality. It
 should be harmless — a correction bias on a hash route is never consulted —

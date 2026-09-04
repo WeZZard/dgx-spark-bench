@@ -1,4 +1,5 @@
-# vllm-dsv4:ray with one change: the DeepseekV4 weight loader skips the
+# vllm-dsv4:ray with one change, in two places: BOTH DeepseekV4 weight
+# loaders -- the target model's and the DSpark draft model's -- skip the
 # tensors a vision checkpoint carries and a text-only model cannot place.
 # Everything else is the image the other DeepSeek rows were measured on.
 #

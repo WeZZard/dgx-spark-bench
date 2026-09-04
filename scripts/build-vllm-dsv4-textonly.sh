@@ -44,17 +44,24 @@ build_here() {
   # patch script refuses if its anchor is missing, but a cached layer from an
   # older base would not re-run it.
   docker run --rm --entrypoint python3 "$TAG" -c '
-F = "/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/model.py"
-s = open(F).read()
-assert s.startswith("# PATCHED-VLLM-DSV4-TEXTONLY"), "marker missing"
+R = "/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia"
+# BOTH loaders, because there are two. The target model reads the checkpoint
+# through AutoWeightsLoader; the DSpark draft model reads the same checkpoint
+# through its own loop and is loaded afterwards, so a green target load is no
+# evidence at all about the draft.
+model = open(R + "/model.py").read()
+dspark = open(R + "/dspark.py").read()
+for name, s in (("model.py", model), ("dspark.py", dspark)):
+    assert s.startswith("# PATCHED-VLLM-DSV4-TEXTONLY"), f"marker missing in {name}"
 for want in ["\"mtp.\"", "\"vision.\"", "\"aligner.\"", "\"image_\"", "\".bias_vl\"",
              "f\"layers.{i}.ffn.gate.e_score_correction_bias\"", "num_hash_layers"]:
-    assert want in s, f"skip list missing {want}"
-# The checkpoint spelling never matches, because AutoWeightsLoader applies the
-# WeightsMapper before it filters. Refusing it here is the point of the check:
-# with it, the load dies on KeyError deep inside DeepseekV4Model.load_weights.
-assert "\"layers.0.ffn.gate.bias\"" not in s, "pre-mapper spelling is back"
-print("   patch verified in image")'
+    assert want in model, f"model.py skip list missing {want}"
+assert "if \".bias_vl\" in name:" in dspark, "dspark.py does not skip .bias_vl"
+# The checkpoint spelling never matches in model.py, because AutoWeightsLoader
+# applies the WeightsMapper before it filters. Refusing it here is the point of
+# the check: with it, the load dies on KeyError inside DeepseekV4Model.
+assert "\"layers.0.ffn.gate.bias\"" not in model, "pre-mapper spelling is back"
+print("   patch verified in image (model.py + dspark.py)")'
 }
 
 if [ "${1:-}" = "--local-only" ]; then build_here; exit 0; fi

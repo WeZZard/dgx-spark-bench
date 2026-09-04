@@ -78,10 +78,27 @@ command -v "$HF_BIN" >/dev/null || {
 # Resume is the default; retries cover the mirror dropping a connection
 # mid-file, which it does.
 attempt=0
+# hf-mirror rate-limits PER CONNECTION, not per client, and the old
+# --max-workers 4 was therefore leaving almost all the bandwidth on the table.
+# Measured on the Vision-Exp fetch, same file set, same minute of the day:
+#
+#    4 workers:    240 MB in 60s    =   4 MB/s   -> 156 GiB in ~11 hours
+#   16 workers:  2,640 MB in 60s    =  44 MB/s   -> 156 GiB in ~1 hour
+#
+# An 11x difference from one flag. If a fetch here is ever described as
+# "rate-limited", measure the worker count before believing it.
+#
+# 16 is not a maximum, it is where this stopped being the bottleneck. Raising
+# it further is untested and the mirror is a courtesy; the disk behind $DEST
+# is also the NFS export the engines read weights through, so a fetch running
+# beside a campaign is a problem regardless of speed -- which is what the
+# busy-container refusal above is for.
+FETCH_WORKERS="${FETCH_WORKERS:-16}"
+echo "== workers       $FETCH_WORKERS"
 until "$HF_BIN" download "$REPO" \
         --revision "$REV" \
         --local-dir "$DEST" \
-        --max-workers 4; do
+        --max-workers "$FETCH_WORKERS"; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 20 ]; then
     echo "!! gave up after $attempt attempts" >&2

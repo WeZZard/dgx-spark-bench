@@ -40,5 +40,46 @@ if [ "${ATTENDED:-0}" != "1" ]; then
     exit 3
   fi
 fi
+# THE WORKER RUNS ITS OWN COPY OF THE LAUNCHER, SO SEND IT THE CURRENT ONE.
+#
+# bring_up ssh's into the worker and runs $launcher from the worker's own
+# checkout. Nothing kept that checkout current, so every edit to a launcher
+# had to be copied to two machines by hand, and the day one was not, the two
+# ranks ran different code: rank 0 with --mem-fraction-static 0.85, rank 1
+# with 0.92, from the same command. A tensor-parallel pair whose ranks
+# disagree about how much memory to reserve is not a configuration anyone
+# meant to measure, and nothing in the log says the ranks differ -- each
+# prints its own flags and both look right.
+#
+# Only scripts/ and src/ go: the code that has to agree. Model stores,
+# results and anything worker-local are untouched. --delete is deliberately
+# NOT used, so a stray file on the worker is left alone rather than removed
+# by a bring-up.
+if [ "${BRINGUP_SYNC:-1}" = "1" ]; then
+  echo "== syncing scripts/ and src/ to $worker"
+  rsync -az --exclude '__pycache__' \
+    "$here/scripts/" "$worker:$here/scripts/" || {
+      echo "refusing to bring up: could not sync scripts/ to $worker." >&2
+      echo "The ranks would run different code. BRINGUP_SYNC=0 skips this." >&2
+      exit 4
+    }
+  rsync -az --exclude '__pycache__' \
+    "$here/src/" "$worker:$here/src/" || {
+      echo "refusing to bring up: could not sync src/ to $worker." >&2
+      exit 4
+    }
+  # Prove it rather than trust it: the launcher is the file whose divergence
+  # caused this, so compare the two copies before either rank starts.
+  mine="$(md5sum "$here/$launcher" | cut -d" " -f1)"
+  theirs="$(ssh -o ConnectTimeout=30 "$worker" "md5sum '$here/$launcher' 2>/dev/null | cut -d' ' -f1")"
+  if [ "$mine" != "$theirs" ]; then
+    echo "refusing to bring up: $launcher differs between ranks after sync" >&2
+    echo "  head:   $mine" >&2
+    echo "  worker: ${theirs:-<missing>}" >&2
+    exit 4
+  fi
+  echo "   launcher matches on both ranks ($mine)"
+fi
+
 echo "== bring-up $(date -Is): $launcher, worker $worker"
 bring_up "$worker" "$here" "$launcher"

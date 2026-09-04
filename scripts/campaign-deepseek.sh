@@ -41,26 +41,32 @@ warmup() { warmup_engine "$BASE" "deepseek-v4-flash"; }
 cell() {
   local workload="$1" users="$2" note="$3"
   echo; echo "############ $workload @ ${users} users ############"
+  # --ignore-eos below: every cell must emit exactly MAXTOK tokens.
+  #
+  # Without it a cell measures whatever length the model felt like. Served rate
+  # is output tokens over the whole wall clock, so a short completion amortises
+  # the fixed prefill and scheduling cost over fewer tokens and reads low. Same
+  # DeepSeek server, same prompt, two runs minutes apart:
+  #
+  #   prose @ 1 user   512 tokens / 11.1 s  ->  46.0 tok/s
+  #   prose @ 1 user   144 tokens /  7.9 s  ->  18.1 tok/s
+  #
+  # A 2.5x swing that is entirely how long the answer was. Across models it is
+  # a systematic bias, not noise: GLM ran nearly every cell to the full 512
+  # while DeepSeek often stopped early, so the comparison would read verbosity
+  # as speed.
+  #
+  # This comment lives ABOVE the command on purpose. Put it between two
+  # backslash-continued lines and the continuation joins the comment onto the
+  # command line, the "#" swallows the rest of it, and every later argument
+  # becomes a separate command. That is not hypothetical -- it is what the
+  # first version of this change did, silently dropping --ignore-eos, --flags
+  # and --notes from every cell of a whole campaign.
   "$here/scripts/sparkbench" measure \
     --base "$BASE" --served-model deepseek-v4-flash \
     --model-dir "$MODEL_DIR" --model-id "$MODEL_ID" \
     --engine-image "$IMAGE" --container "$CONTAINER" \
     --workload "$workload" --users "$users" --max-tokens "$MAXTOK" \
-    # --ignore-eos: every cell must emit exactly MAXTOK tokens.
-    #
-    # Without it a cell measures whatever length the model felt like. Served
-    # rate is output tokens over the whole wall clock, so a short completion
-    # amortises the fixed prefill and scheduling cost over fewer tokens and
-    # reads low. Measured on DeepSeek, same server, same prompt, two runs
-    # minutes apart:
-    #
-    #   prose @ 1 user   512 tokens / 11.1 s  ->  46.0 tok/s
-    #   prose @ 1 user   144 tokens /  7.9 s  ->  18.1 tok/s
-    #
-    # A 2.5x swing that is entirely how long the answer was. Comparing those
-    # two is comparing different quantities, and comparing them ACROSS models
-    # -- where GLM ran its cells to the full 512 and DeepSeek often stopped
-    # early -- would read a difference in verbosity as a difference in speed.
     --ignore-eos \
     --flags "$FLAGS" --notes "${CAMPAIGN_NOTE:+[$CAMPAIGN_NOTE] }$note" \
     || echo "!! cell failed: $workload @ $users (continuing)"

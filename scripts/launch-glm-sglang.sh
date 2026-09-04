@@ -108,28 +108,46 @@ GLM_KV_DTYPE="${GLM_KV_DTYPE:-bfloat16}"
 # Read by the GLM_MEM branch below, so it is set before it, not with its
 # siblings further down. `set -u` turns the other order into a crash.
 GLM_SPEC="${GLM_SPEC:-on}"
-# 0.92 is the published value and it is right for GLM with no drafter -- every
-# no-speculation row in REPORT.md was measured at it. It is NOT right with the
-# DFlash2 drafter, which adds the 2.2 GiB draft model, five layers of draft KV
-# and 1.48 GB of draft-verify CUDA graphs on top. At 0.92 that left 0.15 GiB
-# free, and GLM loads several Triton kernels lazily after serving starts. The
-# engine said so itself, repeatedly, and then hung:
+# WITH A DRAFTER THIS SITS IN A NARROW WINDOW, BOUNDED AT BOTH ENDS.
+#
+# --mem-fraction-static is the share of GPU memory the engine may hold
+# STATICALLY: weights plus KV pool. What is left over is everything dynamic --
+# activations, CUDA graphs, and the Triton kernels GLM loads lazily after
+# serving has already started.
+#
+# The published 0.92 is right with no drafter and every no-speculation row in
+# REPORT.md was measured at it. DFlash2 adds 2.2 GiB of draft weights, five
+# layers of draft KV and 1.48 GB of draft-verify CUDA graphs. At 0.92 with the
+# drafter, what remained was 0.15 GiB, and GLM said so itself before hanging:
 #
 #   Triton kernel 'alloc_extend_kernel' device-loaded after serving started
 #   (free device mem: 0.15 GiB). Pre-load it during engine init to avoid CUDA OOM.
 #   ...
 #   Scheduler watchdog timeout (self.watchdog_timeout=300, self.soft=False)
 #
-# Not an OOM exception and not a kernel fault -- no forward progress for five
-# minutes, three cells into the campaign, and rank 1 then outlived rank 0
-# holding 120 of 121 GiB.
+# No forward progress for five minutes, three cells in. There is no preload
+# flag in this build -- checked -- so the only lever is the fraction itself.
 #
-# So the default depends on whether a drafter is loaded. Lowering it shrinks
-# the KV pool, which is a tuple field and is recorded, and GLM's pool has
-# room to lose: 802,560 tokens against a campaign whose largest cell needs
-# 8 x 33k.
+# Lowering it does NOT simply buy headroom, which is the mistake made first
+# here. The weights are charged to the same budget, so below a floor there is
+# nothing left for KV at all, and the engine refuses outright:
+#
+#   ValueError: Loaded weights leave no GPU memory for the KV cache under
+#   --mem-fraction-static=0.85. Raise --mem-fraction-static above 0.838
+#   (minimum viable = 1 - available/pre = 0.8372). If using speculative
+#   decoding, draft weights are now counted.
+#
+# So the window is (0.8372, ~0.92): too low and there is no KV cache, too high
+# and there is no room for the lazy kernel loads. 0.90 sits in it with about
+# 2.6 GiB dynamic -- some seventeen times what the run that hung had left --
+# and still gives a KV pool of roughly 7.6 GiB, comfortably above the 8 x 33k
+# tokens the largest campaign cell needs. The pool is a tuple field and is
+# recorded, so the cost of this choice is visible in every row it produces.
+#
+# The floor moves with the drafter, so read it out of the log rather than
+# trusting this comment: the engine prints the minimum it computed.
 if [ "$GLM_SPEC" = "on" ]; then
-  GLM_MEM="${GLM_MEM:-0.85}"
+  GLM_MEM="${GLM_MEM:-0.90}"
 else
   GLM_MEM="${GLM_MEM:-0.92}"
 fi

@@ -69,23 +69,26 @@ content — ~78% on structured code, ~34% on prose, ~56% on mixed agent traffic
 — not tuning. Judge any agentic result against the prose and mixed figures,
 never against "count to 300".
 
-**The "FP8" label is wrong on the sibling checkpoint, and that probably
-changes what this comparison means.** Vision-Exp is not on disk here, so it has
-not been audited. Its text sibling has: `scripts/audit-checkpoint.py` finds
-**138.00 GiB of packed 4-bit experts in both** DeepSeek checkpoints we hold.
-`deepseek-ai/DeepSeek-V4-Flash-0731` — the one the same sources call FP8 —
-carries MXFP4 experts (E8M0 scales, block 32), and
-`nvidia/DeepSeek-V4-Flash-nvfp4-DSpark` carries NVFP4 experts (E4M3 scales,
-block 16). `0731`'s own config declares `expert_dtype: fp4`.
+**The "FP8" label is wrong, on this checkpoint and on both of its siblings,
+and that changes what this comparison means.** Audited 2026-09-04 at the
+revision named above, by reading its 48 safetensors headers over HTTP —
+`scripts/audit-remote-checkpoint.py`, eight megabytes rather than 156 GiB:
 
-If Vision-Exp is built the same way, then 49.6–53.8 against 80.1 is **not**
-8-bit against 4-bit and cannot be explained by weight bandwidth, because both
-builds would move the same expert bytes. The difference would have to be in
-the kernel path, which makes `VLLM_USE_B12X_MOE` and DSpark acceptance the two
-things to separate by measurement. **Audit Vision-Exp with
-`scripts/audit-checkpoint.py --verify` the moment it is downloaded, before any
-run**, and settle this rather than assuming either way. Evidence for the
-sibling in `docs/checkpoints.md`.
+| | Vision-Exp | `0731` (text) | nvidia NVFP4 |
+|---|---|---|---|
+| packed expert weights | **138.00 GiB** `I8` | **138.00 GiB** `I8` | **138.00 GiB** `U8` |
+| expert scales | 8.62 GiB `F8_E8M0` | 8.62 GiB `F8_E8M0` | 17.25 GiB `F8_E4M3` |
+| derived block size | **32.00** | **32.00** | **16.00** |
+| format | MXFP4 | MXFP4 | NVFP4 |
+
+Vision-Exp's own `config.json` says `"expert_dtype": "fp4"`; its
+`quantization_config` fp8 block of `[128, 128]` applies to attention.
+
+So 49.6–53.8 against 80.1 is **not** 8-bit against 4-bit, and cannot be
+explained by weight bandwidth: all three builds move exactly the same 138.00
+GiB of expert weight. The difference has to be in the kernel path, which makes
+`VLLM_USE_B12X_MOE` and DSpark acceptance the two things to separate by
+measurement. Full audit, with the byte tables, in `docs/checkpoints.md`.
 
 Two failures in this stack are silent:
 

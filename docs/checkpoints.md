@@ -71,19 +71,70 @@ fp4
 
 `expert_dtype: fp4` is present in **both** DeepSeek checkpoints.
 
-This probably changes what the published DeepSeek comparison means, and the
-qualifier is deliberate. `BASELINE.md`'s DeepSeek row is for
-**Vision-Exp**, which is not on disk here and has therefore not been audited;
-what is audited is its text sibling. The baseline reports 49.6 → 53.8 tok/s for
-the "FP8" build against 80.1 tok/s for the "NVFP4" one, and the natural reading
-is that 4-bit weights beat 8-bit weights on memory bandwidth. For the two
-checkpoints measured here that reading is simply false: **both run 4-bit
-experts and move the same 138.00 GiB of expert weights.** Whatever separates
-them is not weight traffic.
+This changes what the published DeepSeek comparison means. The baseline
+reports 49.6 → 53.8 tok/s for the "FP8" build against 80.1 tok/s for the
+"NVFP4" one, and the natural reading is that 4-bit weights beat 8-bit weights
+on memory bandwidth. For the two checkpoints measured here that reading is
+simply false: **both run 4-bit experts and move the same 138.00 GiB of expert
+weights.** Whatever separates them is not weight traffic.
 
-Audit Vision-Exp the same way as soon as it is downloaded, before it is served.
-If it too is `expert_dtype: fp4`, the published comparison is a kernel-path
-comparison wearing a precision label.
+`BASELINE.md`'s DeepSeek row is for **Vision-Exp**, which is not on disk here,
+so for a while this was said of the text sibling and left hanging for the
+model the row actually names. It no longer is — see the next section.
+
+## Vision-Exp is the same build, and it did not need downloading
+
+That qualifier can now be dropped. `scripts/audit-remote-checkpoint.py` reads
+the 48 safetensors headers over HTTP range requests — about eight megabytes
+against the checkpoint's 156 GiB — and runs them through the same
+`audit_headers()` the on-disk auditor uses:
+
+```
+### deepseek-ai/DeepSeek-V4-Flash-Vision-Exp@86f746b36186  shards=48
+    tensors=72633 total=156.29 GiB
+    index declares 156.29 GiB (agrees)
+    weight field: MXFP4 experts (block 32, 94% of bytes)
+           I8    138.00 GiB   88.3%
+      F8_E8M0      8.63 GiB    5.5%
+      F8_E4M3      5.87 GiB    3.8%
+   routed_experts  138.00 GiB packed 4-bit + 8.62 GiB scales -> block 32.00 = MXFP4  [OK]
+```
+
+Its `config.json` agrees in its own words: `"expert_dtype": "fp4"` beside a
+`quantization_config` of `{"quant_method": "fp8", "fmt": "e4m3",
+"scale_fmt": "ue8m0", "weight_block_size": [128, 128]}`. The fp8 block applies
+to attention. The experts are fp4.
+
+Set beside the two checkpoints on disk, all three lines are the same length:
+
+| | Vision-Exp | `0731` (text) | nvidia NVFP4 |
+|---|---|---|---|
+| packed expert weights | **138.00 GiB** `I8` | **138.00 GiB** `I8` | **138.00 GiB** `U8` |
+| expert scales | 8.62 GiB `F8_E8M0` | 8.62 GiB `F8_E8M0` | 17.25 GiB `F8_E4M3` |
+| derived block size | **32.00** | **32.00** | **16.00** |
+| format | MXFP4 | MXFP4 | NVFP4 |
+
+**So the published DeepSeek comparison is a kernel-path comparison wearing a
+precision label.** `BASELINE.md` reports 49.6 → 53.8 tok/s for the build it
+calls FP8 against 80.1 for the one it calls NVFP4, and the natural reading —
+8-bit weights against 4-bit weights — is false for every checkpoint involved.
+All three move exactly 138.00 GiB of expert weight. Nothing about weight
+bandwidth can produce a 1.6x difference between them.
+
+What is left is the kernel path and the drafter, and both are testable rather
+than arguable: an NVFP4 MoE kernel that requires block-16 E4M3 scales and
+cannot consume block-32 E8M0 ones would run a different code path at identical
+byte traffic, and DSpark acceptance varies from ~34% on prose to ~78% on
+structured code on the published figures alone. `VLLM_USE_B12X_MOE` and the
+measured acceptance rate are the two things to separate.
+
+One serving fact came out of the same eight megabytes. Vision-Exp's top-level
+`config.json` declares `"architectures": ["DeepseekV4ForCausalLM"]`,
+`model_type: deepseek_v4` — a text causal LM. The vision tower lives in the
+repo's own `inference/vision.py` and `inference/config.json`, a bespoke
+reference implementation. An engine that reads `config.json` serves this
+checkpoint as a text model, which is consistent with `BASELINE.md`'s finding
+that the 84.3 / 197.3 figures are text throughput and not a vision result.
 
 The remaining candidates are all kernel-path, and they are testable:
 

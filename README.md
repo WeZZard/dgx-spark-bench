@@ -4,7 +4,9 @@ Reproducible serving benchmarks for three open-weight MoE models on a pair of
 NVIDIA DGX Spark machines (GB10, sm_121, 121 GiB unified memory each, joined
 back-to-back at 200 GbE).
 
-- **DeepSeek-V4-Flash** — the text `0731` checkpoint; Vision-Exp is not yet on disk
+- **DeepSeek-V4-Flash** — served here as the text `0731` checkpoint. Vision-Exp,
+  which is what the published row names, is not on disk but has been audited
+  from its headers and is the same 4-bit expert build
 - **Qwen3.8-Flash-Next**
 - **GLM-5.3-Flash**
 
@@ -78,9 +80,16 @@ published one:
 
 Findings, each written up with the evidence that supports it:
 
-- **The checkpoint labelled FP8 has 4-bit experts.** Both DeepSeek checkpoints
-  carry exactly 138.00 GiB of packed 4-bit expert weights; the "NVFP4" one is
-  larger only because it stores twice the scale bytes. `docs/checkpoints.md`.
+- **The checkpoint labelled FP8 has 4-bit experts, and so does the one the
+  published row actually names.** All three DeepSeek checkpoints in play —
+  `0731`, nvidia's NVFP4 build, and `Vision-Exp` — carry exactly **138.00 GiB**
+  of packed 4-bit expert weights. The "NVFP4" one is larger only because
+  block-16 scaling stores twice the scale bytes of block-32. So the published
+  49.6–53.8 against 80.1 tok/s is not 8-bit against 4-bit and cannot be a
+  weight-bandwidth result; it is a kernel-path result wearing a precision
+  label. Vision-Exp was settled without downloading it, by reading its 48
+  safetensors headers over HTTP — eight megabytes against 156 GiB.
+  `docs/checkpoints.md`, `scripts/audit-remote-checkpoint.py`.
 - **The container could not see the RDMA devices**, so a 200 GbE link
   cross-connected between the two nodes was carrying NCCL over TCP. Fixing it
   was worth 1.74x across every cell measured. `docs/interconnect.md`.

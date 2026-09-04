@@ -4,9 +4,9 @@ Reproducible serving benchmarks for three open-weight MoE models on a pair of
 NVIDIA DGX Spark machines (GB10, sm_121, 121 GiB unified memory each, joined
 back-to-back at 200 GbE).
 
-- **DeepSeek-V4-Flash** — served here as the text `0731` checkpoint. Vision-Exp,
-  which is what the published row names, is not on disk but has been audited
-  from its headers and is the same 4-bit expert build
+- **DeepSeek-V4-Flash** — served here as the text `0731` checkpoint, and also
+  as `Vision-Exp`, the checkpoint the published row actually names, loaded
+  text-only through a patched weight loader
 - **Qwen3.8-Flash-Next**
 - **GLM-5.3-Flash**
 
@@ -136,6 +136,45 @@ Findings, each written up with the evidence that supports it:
   "NVFP4" is the KV cache, its headline throughput belongs to the text model
   rather than the vision one, and its engine version matches neither source.
   `BASELINE.md`, "What the sources actually say".
+- **How a draft model samples is worth up to 2.5x, and it is one word in a
+  JSON blob.** On Vision-Exp, holding everything else fixed and changing only
+  `draft_sample_method` from `probabilistic` to `greedy`:
+
+  | workload, 1 user unless noted | probabilistic | greedy | greedy acceptance |
+  |---|---:|---:|---:|
+  | short | 35.9 | **53.3** | 95.4% |
+  | code | 30.5 | **52.7** | 93.6% |
+  | code @ 6 | 24.8 | **62.1** | 37.7% |
+  | prose | 32.3 | 36.8 | 59.8% |
+  | agentic, 4k | 20.3 | 17.9 | 26.9% |
+  | agentic, 4k @ 6 | 28.2 | 22.1 | 29.8% |
+  | agentic, 33k | 11.5 | 11.7 | 32.2% |
+  | agentic, 33k @ 6 | 15.4 | 16.7 | 27.2% |
+
+  Served rate. The short and code gains are 1.5x to 2.5x and are far outside
+  the 1.3x this repo has measured between repeats of one campaign; the agentic
+  rows move by at most 1.28x and are **not** separated by this data in either
+  direction. Acceptance is what makes the difference legible: greedy drafting
+  is accepted 93-95% of the time on short and code content and 27-32% on
+  agentic context, so the speedup arrives exactly where the draft is right and
+  vanishes where it is not. `greedy` is the value BASELINE.md's published
+  configuration uses; this repo had been running `probabilistic` on every
+  DeepSeek cell.
+- **Acceptance had to be measured per cell before any of that could be seen.**
+  A campaign-wide average runs through a spread the source itself documents —
+  ~78% on code, ~56% on mixed agent traffic, ~34% on prose — so `0731` reading
+  52.8% and Vision-Exp reading 33.5% told nothing apart, and a preflight
+  threshold set at 40% between them refused a healthy server. The counters are
+  monotonic totals, so bracketing each cell gives that cell's acceptance and
+  nothing else. `docs/speculation.md`.
+- **Vision-Exp serves, and it takes two loader patches rather than one.** The
+  stock image cannot place 313 of the checkpoint's tensors and raises on the
+  first. Skipping them in `DeepseekV4ForCausalLM` is not enough: the DSpark
+  draft model reads the same files afterwards through its own loop, with its
+  own skip logic and a bare `params_dict[name]`, so a clean target load is no
+  evidence at all about the draft. Both skips also have to be written in the
+  name the loader sees *after* the weights mapper runs, not the name in the
+  file. `docs/checkpoints.md`.
 
 ## Layout
 

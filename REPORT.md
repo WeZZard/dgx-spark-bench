@@ -267,3 +267,40 @@ Flags: `-c ray start --head --port=25440 --num-gpus=1 &&            echo '== wai
 Image: `vllm-dsv4:ray`  
 Flags: `-c ray start --head --port=25440 --num-gpus=1 &&            echo '== waiting for 2 ray nodes ==' &&            for i in $(seq 1 60); do              n=$(python3 -c "import ray;ray.init(address='auto');print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null || echo 0);              [ "$n" -ge 2 ] && break; sleep 5;            done;            echo "== ray sees $n alive node(s) ==" &&            [ "$n" -ge 2 ] || { echo 'refusing to serve: worker never joined ray' >&2; exit 7; } &&            exec vllm serve --model /home/USER/models/hf/dsv4-flash-fp8 --served-model-name deepseek-v4-flash --tensor-parallel-size 2 --host 0.0.0.0 --port 8888 --kv-cache-dtype fp8_ds_mla --max-model-len 262144 --max-num-seqs 12 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --trust-remote-code --distributed-executor-backend ray --speculative-config \{\"method\":\"dspark\"\,\"num_speculative_tokens\":5\,\"draft_sample_method\":\"probabilistic\"\} `  
 
+
+## deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
+
+- checkpoint revision `86f746b36186f0e567729a5c06a8c918caba82a9`
+- weight, measured from the checkpoint: MXFP4 experts (block 32, 94% of bytes)
+
+| config | workload | prompt tok | out tok | users | KV cache | KV pool | served rate | decode rate | TTFT p50 | needle | failed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| vexp-textonly-k6 | agentic-33k | 27,017 | 512 | 1 | fp8_ds_mla | 508,163 | **11.5** | 24.4 | 23636 ms | 100% | 0 |
+| vexp-textonly-k6-greedy | agentic-33k | 27,017 | 512 | 1 | fp8_ds_mla | 496,154 | **11.7** | 23.0 | 21529 ms | 100% | 0 |
+| vexp-textonly-k6 | agentic-33k | 26,965 | 3,072 | 6 | fp8_ds_mla | 508,163 | **15.4** | 5.2 | 96434 ms | 100% | 0 |
+| vexp-textonly-k6-greedy | agentic-33k | 26,965 | 3,072 | 6 | fp8_ds_mla | 496,154 | **16.7** | 5.4 | 72958 ms | 83% | 0 |
+| vexp-textonly-k6 | agentic-4k | 3,831 | 512 | 1 | fp8_ds_mla | 508,163 | **20.3** | 23.3 | 3303 ms | 100% | 0 |
+| vexp-textonly-k6-greedy | agentic-4k | 3,831 | 512 | 1 | fp8_ds_mla | 496,154 | **17.9** | 20.1 | 3206 ms | 100% | 0 |
+| vexp-textonly-k6 | agentic-4k | 3,502 | 3,072 | 6 | fp8_ds_mla | 508,163 | **28.2** | 6.0 | 13214 ms | 100% | 0 |
+| vexp-textonly-k6-greedy | agentic-4k | 3,502 | 3,072 | 6 | fp8_ds_mla | 496,154 | **22.1** | 6.4 | 46925 ms | 100% | 0 |
+| vexp-textonly-k6 | code | 122 | 512 | 1 | fp8_ds_mla | 508,163 | **30.5** | 31.4 | 535 ms | - | 0 |
+| vexp-textonly-k6-greedy | code | 122 | 512 | 1 | fp8_ds_mla | 496,154 | **52.7** | 54.9 | 407 ms | - | 0 |
+| vexp-textonly-k6 | code | 122 | 3,072 | 6 | fp8_ds_mla | 508,163 | **24.8** | 9.7 | 71506 ms | - | 0 |
+| vexp-textonly-k6-greedy | code | 122 | 3,072 | 6 | fp8_ds_mla | 496,154 | **62.1** | 13.4 | 1325 ms | - | 0 |
+| vexp-textonly-k6 | prose | 113 | 512 | 1 | fp8_ds_mla | 508,163 | **32.3** | 33.3 | 505 ms | - | 0 |
+| vexp-textonly-k6-greedy | prose | 113 | 512 | 1 | fp8_ds_mla | 496,154 | **36.8** | 38.1 | 479 ms | - | 0 |
+| vexp-textonly-k6 | short | 103 | 512 | 1 | fp8_ds_mla | 508,163 | **35.9** | 36.8 | 366 ms | - | 0 |
+| vexp-textonly-k6-greedy | short | 103 | 512 | 1 | fp8_ds_mla | 496,154 | **53.3** | 56.0 | 483 ms | - | 0 |
+| vexp-textonly-k6 | short | 103 | 3,072 | 6 | fp8_ds_mla | 508,163 | **40.8** | 14.2 | 36432 ms | - | 0 |
+| vexp-textonly-k6-greedy | short | 103 | 3,072 | 6 | fp8_ds_mla | 496,154 | **41.2** | 13.8 | 35332 ms | - | 0 |
+
+### engine and flags, per configuration
+
+**vexp-textonly-k6** — 9 row(s)  
+Image: `vllm-dsv4:textonly`  
+Flags: `-c ray start --head --port=25440 --num-gpus=1 &&            echo '== waiting for 2 ray nodes ==' &&            for i in $(seq 1 60); do              n=$(python3 -c "import ray;ray.init(address='auto');print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null || echo 0);              [ "$n" -ge 2 ] && break; sleep 5;            done;            echo "== ray sees $n alive node(s) ==" &&            [ "$n" -ge 2 ] || { echo 'refusing to serve: worker never joined ray' >&2; exit 7; } &&            exec vllm serve --model /home/USER/models/hf/dsv4-flash-vision-exp --served-model-name deepseek-v4-flash --tensor-parallel-size 2 --host 0.0.0.0 --port 8888 --kv-cache-dtype fp8_ds_mla --max-model-len 262144 --max-num-seqs 12 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --trust-remote-code --distributed-executor-backend ray --speculative-config \{\"method\":\"dspark\"\,\"num_speculative_tokens\":6\,\"draft_sample_method\":\"probabilistic\"\} `  
+
+**vexp-textonly-k6-greedy** — 9 row(s)  
+Image: `vllm-dsv4:textonly`  
+Flags: `-c ray start --head --port=25440 --num-gpus=1 &&            echo '== waiting for 2 ray nodes ==' &&            for i in $(seq 1 60); do              n=$(python3 -c "import ray;ray.init(address='auto');print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null || echo 0);              [ "$n" -ge 2 ] && break; sleep 5;            done;            echo "== ray sees $n alive node(s) ==" &&            [ "$n" -ge 2 ] || { echo 'refusing to serve: worker never joined ray' >&2; exit 7; } &&            exec vllm serve --model /home/USER/models/hf/dsv4-flash-vision-exp --served-model-name deepseek-v4-flash --tensor-parallel-size 2 --host 0.0.0.0 --port 8888 --kv-cache-dtype fp8_ds_mla --max-model-len 262144 --max-num-seqs 12 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --trust-remote-code --distributed-executor-backend ray --speculative-config \{\"method\":\"dspark\"\,\"num_speculative_tokens\":6\,\"draft_sample_method\":\"greedy\"\} `  
+

@@ -28,12 +28,30 @@ WORKER="${WORKER_HOST:-spark-right-fast}"
 log=/tmp/ds-sweep-$NOTE.log
 echo "== sweep '$NOTE' starting $(date -Is), log $log"
 
-# Tear down both ranks and wait for the memory back, rather than sleeping. A
-# rank left holding 90 GB is what turned a failed launch into a wedged node.
-for host in "" "$WORKER"; do
-  if [ -z "$host" ]; then docker rm -f "$NAME" >/dev/null 2>&1 || true
-  else ssh -o ConnectTimeout=30 "$host" "docker rm -f '$NAME' >/dev/null 2>&1 || true"; fi
-done
+# TEAR DOWN BOTH RANKS, ALWAYS, ON EVERY EXIT PATH.
+#
+# A rank left holding 90 GB is what turned a failed launch into a wedged node,
+# and this script reaches that state from three directions: the next sweep
+# never happening, one rank outliving its peer mid-campaign, and -- the one
+# that was missed until 2026-09-04 -- an early `exit` between bring-up and the
+# teardown at the bottom. wait_ready failing, or a preflight refusing to
+# measure, jumped straight over it and left both containers up. A rank that is
+# not serving anything is only holding memory.
+#
+# So the teardown is a trap, not a block of code at the end that an exit can
+# step around.
+teardown() {
+  echo "== tearing down both ranks"
+  for host in "" "$WORKER"; do
+    if [ -z "$host" ]; then docker rm -f "$NAME" >/dev/null 2>&1 || true
+    else ssh -o ConnectTimeout=30 "$host" "docker rm -f '$NAME' >/dev/null 2>&1 || true"; fi
+  done
+}
+
+# Once before, to reclaim whatever a previous run left behind...
+teardown
+# ...and once on every way out of this script, however it ends.
+trap teardown EXIT
 
 ( setsid nohup bash scripts/bring-up.sh scripts/launch-deepseek-vllm.sh > "$log" 2>&1 < /dev/null & )
 
@@ -85,22 +103,6 @@ else
   echo "   no counter snapshot was taken before the campaign; cannot tell."
 fi
 
-# TEAR DOWN BOTH RANKS, ALWAYS, INCLUDING AFTER A FAILED CAMPAIGN.
-#
-# The teardown at the top of this script runs before the NEXT sweep, which is
-# no help at all if there is not going to be one. On 2026-09-04 a GLM run hit
-# a scheduler watchdog timeout, rank 0 died, and rank 1 stayed up holding
-# 120 of 121 GiB for as long as nobody looked -- the exact "a rank left
-# holding 90 GB" state the header at the top warns about, reached from the
-# other end.
-#
-# A rank that survived its peer is not serving anything; it is only holding
-# memory. Remove it here so the machine is left usable whatever happened
-# above.
-echo "== tearing down both ranks"
-for host in "" "$WORKER"; do
-  if [ -z "$host" ]; then docker rm -f "$NAME" >/dev/null 2>&1 || true
-  else ssh -o ConnectTimeout=30 "$host" "docker rm -f '$NAME' >/dev/null 2>&1 || true"; fi
-done
-
+# The teardown runs from the EXIT trap installed at the top, so it happens
+# after this line whether the campaign finished, refused, or died.
 echo "== sweep '$NOTE' done $(date -Is)"

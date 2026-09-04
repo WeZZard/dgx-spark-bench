@@ -41,7 +41,23 @@ tensors_checked=0
 acceptance_checked=0
 
 echo "== 1. loader 'Skipping' lines (source's own grep)"
-skips=$(docker logs "$C" 2>&1 | grep -i "skipping" | grep -i "expert\|weight\|tensor" | head -10)
+# MATCH THE MESSAGE, NOT THE LOG PREFIX.
+#
+# Every vLLM line carries its emitting module: "... WARNING 09-04 11:17:44
+# [weight_utils.py:871] Network filesystem (NFS4) detected but checkpoint
+# total size exceeds 90% of available RAM. Skipping auto-prefetch." That line
+# says nothing about tensors -- it is about not warming the page cache -- but
+# "weight_utils.py" satisfied the expert|weight|tensor filter, so the check
+# fired. On 2026-09-04 it refused a healthy Vision-Exp bring-up after a
+# 21-minute load, which is the expensive way to learn that a guard was reading
+# a file name.
+#
+# Stripping the "[file.py:NNN] " prefix leaves the message the check is
+# actually about. It does not narrow what counts as a hit: a real
+# "Skipping loading of <tensor>" still matches, and is still fatal.
+skips=$(docker logs "$C" 2>&1 \
+        | sed -E 's/.*\[[A-Za-z0-9_.]+\.py:[0-9]+\][[:space:]]*//' \
+        | grep -i "skipping" | grep -i "expert\|weight\|tensor" | head -10)
 if [ -n "$skips" ]; then
   echo "!! FAIL: the loader reported skipped tensors:" >&2
   printf '   %s\n' "$skips" >&2

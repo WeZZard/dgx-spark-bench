@@ -149,3 +149,45 @@ not be set beside a figure that used a drafter. Shared memory in this
 kernel depends on `block_I`, `dim` and `threads` rather than on batch or
 sequence length, so the verify width should not by itself reintroduce the
 overflow -- the standalone harness ran an 8-token batch without trouble.
+
+## A fifth attempt, and it was mine
+
+2026-09-04. A sweep meant to measure one thing — GLM with the DFlash2 drafter,
+against the no-speculation rows already in `REPORT.md` — was launched as
+
+```bash
+CONFIG_NOTE=glm-dflash2-eos GLM_SPEC=on bash scripts/sweep-glm.sh
+```
+
+and died after seventeen minutes of weight loading with
+
+```
+tvm.error.InternalError: Error in function 'TllmGenFmhaRunner'
+  at flashinfer/trtllm/fmha/fmhaRunner.cuh:37: Unsupported architecture
+[AutoTuner]: Tuning trtllm_batch_decode_mla:   0%|  | 0/21
+```
+
+which is attempt 2 from the table above, arrived at by accident. The
+launcher's `GLM_DSA` and `GLM_KV_DTYPE` still defaulted to the *published*
+configuration — auto-detect and `fp8_e4m3` — and every measured GLM row was
+taken with `GLM_KV_DTYPE=bfloat16 GLM_DSA=tilelang` passed explicitly. So a
+command that set one variable changed three, and `sweep-glm.sh`'s own header
+says to change one thing per sweep.
+
+The launcher was the trap, not the sweep. Twenty lines above those two
+defaults, `GLM_MOE_BACKEND` is pinned up front with a comment saying to do
+that "rather than spending twenty minutes of weight loading to be told" — the
+identical failure mode, guarded against on one line and left open on the next.
+
+Two changes, both in `scripts/launch-glm-sglang.sh`:
+
+- **The defaults are now the configuration that serves**, `tilelang` and
+  `bfloat16`, which is what every recorded GLM row used. The published pair is
+  still reachable by setting both knobs explicitly.
+- **A non-bfloat16 KV cache is refused before the load**, with the reason and
+  a pointer here. The test is on the KV dtype alone, not on the dtype/backend
+  pair, because the table above rules out *every* backend for fp8 KV on this
+  hardware — there is no second knob that rescues it.
+
+`GLM_ALLOW_UNREACHABLE_DSA=1` reopens it, for when reproducing the failure is
+the point.

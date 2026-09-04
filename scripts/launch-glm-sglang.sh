@@ -87,8 +87,24 @@ GLM_EP="${GLM_EP:-on}"                      # expert parallelism: see note 1
 # (the CUDA kernel hardcodes bfloat16) and _check_tilelang_dsa_fp8_kv would
 # reject it, and separately the tilelang DSA kernel overflows shared memory
 # on GB10 at 8-token verify (BASELINE.md).
-GLM_DSA="${GLM_DSA:-}"
-GLM_KV_DTYPE="${GLM_KV_DTYPE:-fp8_e4m3}"    # PR #36904's fp8 KV; bf16 before it
+#
+# WHAT THE DEFAULTS ARE NOW, AND WHY THEY ARE NOT THE PUBLISHED ONES.
+#
+# These two knobs used to default to the published configuration -- empty DSA
+# (auto-detect) and fp8_e4m3 KV. Everything above explains why that pair
+# cannot run on GB10, and the defaults still shipped it, so anyone who
+# launched without setting both spent seventeen minutes loading 126 GiB to be
+# told `TllmGenFmhaRunner: Unsupported architecture`. That is exactly the trap
+# GLM_MOE_BACKEND below was set up front to avoid, left open one line above
+# it. It cost a wasted load on 2026-09-04, in a sweep meant to change one
+# thing, which instead changed three.
+#
+# So the defaults are the configuration that serves and that every recorded
+# GLM row in REPORT.md was measured with. The published pair is still
+# reachable -- GLM_DSA= GLM_KV_DTYPE=fp8_e4m3 -- and is refused below unless
+# GLM_ALLOW_UNREACHABLE_DSA=1 says the failure is the point.
+GLM_DSA="${GLM_DSA:-tilelang}"
+GLM_KV_DTYPE="${GLM_KV_DTYPE:-bfloat16}"
 GLM_MEM="${GLM_MEM:-0.92}"
 GLM_MAMBA="${GLM_MAMBA:-40}"
 GLM_MAMBA_DTYPE="${GLM_MAMBA_DTYPE:-bfloat16}"
@@ -119,6 +135,28 @@ echo "== rank $RANK: container cap ${CAP_GIB}GiB, need ${NEED_GIB}GiB free"
 wait_for_free_memory "$NEED_GIB"
 
 [ -d "$GLM_MODEL" ] || { echo "rank $RANK: $GLM_MODEL not readable" >&2; exit 6; }
+
+# Refuse the known-unreachable pair before the 126 GiB load rather than after
+# it. An fp8_e4m3 KV cache leaves no DSA backend this hardware can run: the
+# arch gate rejects flashinfer_sparse_mla for glm5_next, auto-detect resolves
+# to trtllm which has no sm_121 kernel, and tilelang's fp8 KV path is
+# ROCm-only. Four attempts established that, three of them costing a full
+# weight load each (docs/glm-dsa.md).
+if [ "$GLM_KV_DTYPE" != "bfloat16" ] && [ "${GLM_ALLOW_UNREACHABLE_DSA:-0}" != "1" ]; then
+  cat >&2 <<EOM
+refusing to launch: --kv-cache-dtype $GLM_KV_DTYPE with DSA backend '${GLM_DSA:-auto}'.
+
+No DSA backend in this image can serve GLM-5.3-Flash with a non-bfloat16 KV
+cache on GB10 -- not one, which is why the test is on the KV dtype alone and
+not on the pair. flashinfer_sparse_mla is arch-gated against glm5_next,
+auto-detect resolves to trtllm which has no sm_121 kernel, and tilelang's fp8
+KV path is ROCm-only. This configuration loads for about seventeen minutes
+and then dies at the first forward pass. See docs/glm-dsa.md.
+
+Set GLM_ALLOW_UNREACHABLE_DSA=1 if reproducing that failure is the point.
+EOM
+  exit 8
+fi
 
 args=(
   --model-path "$GLM_MODEL"

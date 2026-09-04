@@ -62,6 +62,24 @@ DS_MAX_LEN="${DS_MAX_LEN:-262144}"
 DS_MAX_SEQS="${DS_MAX_SEQS:-12}"
 DS_BATCHED_TOKENS="${DS_BATCHED_TOKENS:-8192}"
 DS_GPU_UTIL="${DS_GPU_UTIL:-0.85}"
+# num_speculative_tokens MUST BE A MULTIPLE OF THE CHECKPOINT'S n_predict,
+# and the two DeepSeek checkpoints here disagree about what that is.
+#
+#   deepseek-ai/DeepSeek-V4-Flash-0731        num_nextn_predict_layers = 1
+#   deepseek-ai/DeepSeek-V4-Flash-Vision-Exp  num_nextn_predict_layers = 3
+#
+# So k=5 serves on 0731 and is refused outright on Vision-Exp:
+#
+#   ValidationError: 1 validation error for SpeculativeConfig
+#     Value error, num_speculative_tokens:5 must be divisible by n_predict=3
+#
+# It fails in create_engine_config, before any weights are read, which is the
+# one mercy here. BASELINE.md's published Vision-Exp configuration is DSpark
+# k=6 -- divisible by 3, and now visibly not an arbitrary choice.
+#
+# Both checkpoints ship three mtp.* blocks regardless, so this field is the
+# MTP predict depth and not the block count; check-patch4.sh prints the two
+# and deliberately does not require them to agree.
 DS_SPEC_TOKENS="${DS_SPEC_TOKENS:-5}"
 DS_SPEC="${DS_SPEC:-on}"
 DS_EXTRA="${DS_EXTRA:-}"
@@ -110,9 +128,21 @@ args=(
   # would reject "ray" outright. Ray is what this launcher actually builds.
   --distributed-executor-backend ray
 )
+DS_SPEC_SAMPLE="${DS_SPEC_SAMPLE:-probabilistic}"
 if [ "$DS_SPEC" = "on" ]; then
+  # Check the divisibility here rather than letting vLLM find it, so the
+  # message names the checkpoint and the field it came from.
+  n_predict="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]+'/config.json')).get('num_nextn_predict_layers',1))" "$DS_MODEL" 2>/dev/null || echo "")"
+  if [ -n "$n_predict" ] && [ "$n_predict" -gt 0 ] \
+     && [ $(( DS_SPEC_TOKENS % n_predict )) -ne 0 ]; then
+    echo "refusing to launch: DS_SPEC_TOKENS=$DS_SPEC_TOKENS is not a multiple of" >&2
+    echo "  num_nextn_predict_layers=$n_predict, declared by $(basename "$DS_MODEL")." >&2
+    echo "  vLLM refuses this in create_engine_config. Use a multiple of $n_predict" >&2
+    echo "  -- BASELINE.md's published Vision-Exp configuration is k=6." >&2
+    exit 9
+  fi
   args+=( --speculative-config \
-    "{\"method\":\"dspark\",\"num_speculative_tokens\":${DS_SPEC_TOKENS},\"draft_sample_method\":\"probabilistic\"}" )
+    "{\"method\":\"dspark\",\"num_speculative_tokens\":${DS_SPEC_TOKENS},\"draft_sample_method\":\"${DS_SPEC_SAMPLE}\"}" )
 fi
 # shellcheck disable=SC2206
 [ -n "$DS_EXTRA" ] && args+=( $DS_EXTRA )

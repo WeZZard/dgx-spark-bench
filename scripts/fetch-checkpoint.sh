@@ -78,21 +78,33 @@ command -v "$HF_BIN" >/dev/null || {
 # Resume is the default; retries cover the mirror dropping a connection
 # mid-file, which it does.
 attempt=0
-# hf-mirror rate-limits PER CONNECTION, not per client, and the old
-# --max-workers 4 was therefore leaving almost all the bandwidth on the table.
-# Measured on the Vision-Exp fetch, same file set, same minute of the day:
+# hf-mirror rate-limits PER CONNECTION, not per client, so the old
+# --max-workers 4 left most of the link idle. Measured on the Vision-Exp
+# fetch, same file set, minutes apart:
 #
-#    4 workers:    240 MB in 60s    =   4 MB/s   -> 156 GiB in ~11 hours
-#   16 workers:  2,640 MB in 60s    =  44 MB/s   -> 156 GiB in ~1 hour
+#    4 workers:    240 MB in 60s              =  4.0 MB/s
+#   16 workers:  2,640 MB in 60s              = 44.0 MB/s   <- burst
+#   16 workers:  2,770 MB in 60s              = 46.2 MB/s   <- burst
+#   16 workers:  3,960 MB in 176s             = 22.5 MB/s   <- sustained
 #
-# An 11x difference from one flag. If a fetch here is ever described as
-# "rate-limited", measure the worker count before believing it.
+# THE 60-SECOND NUMBERS ARE BURSTS AND THE 176-SECOND ONE IS THE HONEST
+# FIGURE. A short window lands in a clean stretch; a longer one includes the
+# retry stalls, and the sustained rate is about half the burst. 5.6x over four
+# workers is the real gain, not the 11x a single minute suggests. Do not quote
+# a one-minute sample of this as throughput.
 #
-# 16 is not a maximum, it is where this stopped being the bottleneck. Raising
-# it further is untested and the mirror is a courtesy; the disk behind $DEST
-# is also the NFS export the engines read weights through, so a fetch running
-# beside a campaign is a problem regardless of speed -- which is what the
-# busy-container refusal above is for.
+# The second reason to distrust bursts here: **a failure discards whatever is
+# in flight.** DNS through this path flaps under load -- five
+# "[Errno -3] Temporary failure in name resolution" in one fetch -- and each
+# abort throws away the partial files. The destination directory was observed
+# going from 12 GB to 5 GB across one such episode. More workers means more
+# in flight, so it also means a larger loss per event; 16 is what was
+# measured, and 8 is plausibly the better trade on an unreliable path but has
+# not been measured here.
+#
+# Restarting the fetch also discards in-flight partials, so a restart to
+# "tune" the worker count is not free -- it costs whatever was in flight.
+# Completed files always resume.
 FETCH_WORKERS="${FETCH_WORKERS:-16}"
 echo "== workers       $FETCH_WORKERS"
 until "$HF_BIN" download "$REPO" \

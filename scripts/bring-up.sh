@@ -27,8 +27,21 @@ cd "$here"
 # someone watching. The database is what knows; ATTENDED=1 is the human saying
 # they are in fact watching.
 if [ "${ATTENDED:-0}" != "1" ]; then
-  img="$(grep -oE '^[A-Z_]*IMAGE="\$\{[A-Z_]*IMAGE:-[^}]+\}"' "$launcher" \
+  # Resolve the image the SAME WAY the launcher will, environment override
+  # included. This used to read only the default out of the launcher, so
+  # `DS_IMAGE=vllm-dsv4:textonly bash scripts/sweep-deepseek.sh` had its Rule 3
+  # check run against vllm-dsv4:ray -- a proven image that was not the one
+  # about to start. The gate would have passed an image that had never served,
+  # which is the entire failure it exists to prevent, and it would have done
+  # so silently.
+  var="$(grep -oE '^[A-Z_]*IMAGE="\$\{[A-Z_]*IMAGE:-[^}]+\}"' "$launcher" \
+         | head -1 | sed -E 's/^([A-Z_]*IMAGE)=.*/\1/')"
+  dflt="$(grep -oE '^[A-Z_]*IMAGE="\$\{[A-Z_]*IMAGE:-[^}]+\}"' "$launcher" \
          | head -1 | sed -E 's/.*:-([^}]+)\}"/\1/')"
+  img="${!var:-$dflt}"
+  if [ -n "$var" ] && [ -n "${!var:-}" ] && [ "${!var}" != "$dflt" ]; then
+    echo "== $var is overridden: checking '${!var}', not the launcher default '$dflt'"
+  fi
   if [ -n "$img" ]; then
     if ! "$here/scripts/sparkbench" preflight --engine-image "$img"; then
       echo "refusing to bring up an unproven launcher unattended." >&2

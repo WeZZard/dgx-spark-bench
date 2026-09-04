@@ -214,13 +214,15 @@ def cmd_report(a) -> int:
         return 0
     rows = db.execute("""
         SELECT r.*, ms.value AS served, md.value AS decode,
-               mn.value AS needle, mt.value AS ttft, mf.value AS failed
+               mn.value AS needle, mt.value AS ttft, mf.value AS failed,
+               mo.value AS out_tok
         FROM runs r
         LEFT JOIN metrics ms ON ms.run_id = r.id AND ms.name = 'served_rate'
         LEFT JOIN metrics md ON md.run_id = r.id AND md.name = 'decode_rate'
         LEFT JOIN metrics mn ON mn.run_id = r.id AND mn.name = 'needle_hit_rate'
         LEFT JOIN metrics mt ON mt.run_id = r.id AND mt.name = 'ttft_p50'
         LEFT JOIN metrics mf ON mf.run_id = r.id AND mf.name = 'requests_failed'
+        LEFT JOIN metrics mo ON mo.run_id = r.id AND mo.name = 'output_tokens'
         ORDER BY r.model, r.workload, r.users, r.started_at
     """).fetchall()
     if not rows:
@@ -238,16 +240,23 @@ def cmd_report(a) -> int:
         out.append(f"- checkpoint revision `{first['model_revision']}`")
         out.append(f"- weight, measured from the checkpoint: {first['weight']}")
         out.append("")
-        hdr = ("config", "workload", "prompt tok", "users", "KV cache", "KV pool",
-               "served rate", "decode rate", "TTFT p50", "needle", "failed")
+        # out tok is in the table because served rate divides by it. A cell
+        # that stopped early amortises the fixed prefill cost over fewer
+        # tokens and reads low, so two rows are only comparable when this
+        # column matches. Cells run with --ignore-eos show exactly
+        # users x max_tokens; earlier ones vary.
+        hdr = ("config", "workload", "prompt tok", "out tok", "users",
+               "KV cache", "KV pool", "served rate", "decode rate",
+               "TTFT p50", "needle", "failed")
         out.append("| " + " | ".join(hdr) + " |")
         out.append("|" + "|".join("---" for _ in hdr) + "|")
         for r in rs:
             out.append(
-                "| {} | {} | {} | {} | {} | {:,} | **{}** | {} | {} | {} | {} |".format(
+                "| {} | {} | {} | {} | {} | {} | {:,} | **{}** | {} | {} | {} | {} |".format(
                     _config_of(r["notes"]),
                     r["workload"],
                     f"{r['prompt_tokens']:,}" if r["prompt_tokens"] else "-",
+                    f"{int(r['out_tok']):,}" if r["out_tok"] is not None else "-",
                     r["users"], r["kv_cache"], r["kv_pool_tokens"],
                     f"{r['served']:.1f}" if r["served"] is not None else "-",
                     f"{r['decode']:.1f}" if r["decode"] is not None else "-",

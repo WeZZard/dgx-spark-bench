@@ -84,13 +84,27 @@ Three things to measure, in this order.
    AssertionError: Unsupported rhs dtype fp8e4nv
    ```
 
-   A Triton `dot` in the attention path cannot take an fp8 right-hand side in
-   this build. It survives one request at a time and dies on a concurrent
-   multi-thousand-token prefill, so the failure is invisible until exactly the
-   workload this project exists to measure. Both nodes came back clean —
-   117 GiB available, nothing in state D — and the harness recorded the cell as
-   `0.0 tok/s, 6 requests, 6 failed` rather than dropping it, which is the
-   behaviour that keeps a broken configuration from looking merely absent.
+   A Triton `dot` in the QSA attention path cannot take an fp8 right-hand side
+   in this build. Both nodes came back clean — 117 GiB available, nothing in
+   state D — and the harness recorded the cell as `0.0 tok/s, 6 requests,
+   6 failed` rather than dropping it, which is the behaviour that keeps a
+   broken configuration from looking merely absent.
+
+   **The "concurrent" in this paragraph used to say the trigger was load. It
+   is not, and the correction matters.** Reading
+   `qwen_sparse_attn_backend.py`, `forward_extend` branches on `if not
+   any(prefix_lens)`: no prefix and it passes freshly projected bfloat16 k/v
+   to the plain kernel, any prefix and the `_ck` kernel reads K/V straight out
+   of the paged pool — which is fp8 exactly when `--kv-cache-dtype` made it
+   so. A non-zero prefix is what chunked prefill produces, and
+   `chunked_prefill_size` is 8192. `scripts/probe-qwen-fp8kv.sh` tested the
+   prediction that follows: **one** request with a 30,301-token prompt, no
+   concurrency, same assertion, server dead. The 4,318-token control passed at
+   the same one user.
+
+   So the real rule is that fp8 KV fails on any prompt longer than
+   `chunked_prefill_size`, which is worse than "fails under load" and is
+   precisely the long-context case. Full working in `docs/qwen-qsa.md`.
 
    **So fp8 KV is not available on this image**, and the pool that speculation
    takes cannot be bought back this way. What remains: `nvfp4` and
@@ -121,6 +135,15 @@ Three things to measure, in this order.
    The failure was clean: both nodes came back to 117 GiB available with no
    container and no process stuck in state D. The guard did its job and nothing
    needed a power cycle.
+
+   **This error is not Qwen-specific and it caught GLM too, on 2026-09-04.**
+   Adding the DFlash2 drafter to GLM and then *lowering*
+   `--mem-fraction-static` to 0.85 to make room produced the same refusal, for
+   the same reason: the fraction is the static budget, weights are charged to
+   it, and draft weights are now counted. Lowering it does not buy headroom —
+   it takes the headroom from the KV cache. The engine names the floor it
+   computed (`minimum viable = 1 - available/pre`), so read it out of the log
+   rather than guessing. `scripts/launch-glm-sglang.sh` records GLM's window.
 3. **The ReplaySSM verify path.** `enable_linear_replayssm_spec` defaults to
    False and was False for the run above. This model is 48 layers of mostly
    linear attention, and SGLang has a fold-every-commit verify valid only for a

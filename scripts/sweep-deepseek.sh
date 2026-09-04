@@ -55,7 +55,7 @@ CAMPAIGN_NOTE="$NOTE" bash scripts/campaign-deepseek.sh "$BASE"
 # three that observes the draft actually working. Not fatal here -- the cells
 # are already recorded -- but a failure means they must not be believed.
 echo "== patch-4 re-check, now that DSpark has had traffic"
-bash scripts/check-patch4.sh "$NAME" "$BASE" \
+REQUIRE_ACCEPTANCE=1 bash scripts/check-patch4.sh "$NAME" "$BASE" \
   || echo "!! DSpark acceptance is in unpatched territory: the numbers above are suspect" >&2
 
 echo "== sweep '$NOTE' done $(date -Is)"

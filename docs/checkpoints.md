@@ -297,6 +297,32 @@ Layers 0-2 route by a token-id → expert-id table and carry no router bias, so
 nowhere to land. They are skipped by name rather than by a `.ffn.gate.bias`
 pattern, which would also drop the 40 that layers 3-42 need.
 
+### The skip list is matched against the mapped name, not the file's
+
+Which name, though, is not a detail. `AutoWeightsLoader.load_weights` maps
+first and filters second:
+
+```python
+if mapper is not None:
+    weights = mapper.apply(weights)
+# filter out weights with first-prefix/substr to skip in name
+weights = ((name, w) for name, w in weights if not self._can_skip(name))
+```
+
+So `skip_substrs` sees `layers.0.ffn.gate.e_score_correction_bias`, never
+`layers.0.ffn.gate.bias`. The first text-only image was written with the
+checkpoint's spelling, matched nothing, and died 18 minutes into the load with
+`KeyError: 'layers.0.ffn.gate.e_score_correction_bias'` on the worker rank
+(2026-09-04, `vexp-textonly-k6`, first attempt). The other four entries were
+unaffected: `vision.`, `aligner.` and `image_` have no mapping, and the
+gate-bias rule is an `orig_to_new_suffix`, so it does not fire on a name that
+ends `.bias_vl`.
+
+`docker/patch-vllm-dsv4-textonly.py` now derives the three from
+`config.num_hash_layers` instead of hard-coding them, and
+`scripts/build-vllm-dsv4-textonly.sh` fails the build if the pre-mapper
+spelling reappears — the check that would have caught this before the load.
+
 That skip is the one that removes a routing input rather than a modality. It
 should be harmless — a correction bias on a hash route is never consulted —
 but that is an argument from the architecture, not a measurement. That is a `skip_substrs` change —

@@ -43,14 +43,18 @@ build_here() {
   # Verify the patch is in the image rather than trusting the build. The
   # patch script refuses if its anchor is missing, but a cached layer from an
   # older base would not re-run it.
-  docker run --rm --entrypoint bash "$TAG" -c '
-    F=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/model.py
-    head -1 "$F" | grep -q PATCHED-VLLM-DSV4-TEXTONLY || { echo "marker missing" >&2; exit 1; }
-    for want in "vision." "aligner." "image_" ".bias_vl" \
-                "layers.0.ffn.gate.bias" "layers.1.ffn.gate.bias" "layers.2.ffn.gate.bias"; do
-      grep -q "\"$want\"," "$F" || { echo "skip list missing $want" >&2; exit 1; }
-    done
-    echo "   patch verified in image"'
+  docker run --rm --entrypoint python3 "$TAG" -c '
+F = "/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/model.py"
+s = open(F).read()
+assert s.startswith("# PATCHED-VLLM-DSV4-TEXTONLY"), "marker missing"
+for want in ["\"mtp.\"", "\"vision.\"", "\"aligner.\"", "\"image_\"", "\".bias_vl\"",
+             "f\"layers.{i}.ffn.gate.e_score_correction_bias\"", "num_hash_layers"]:
+    assert want in s, f"skip list missing {want}"
+# The checkpoint spelling never matches, because AutoWeightsLoader applies the
+# WeightsMapper before it filters. Refusing it here is the point of the check:
+# with it, the load dies on KeyError deep inside DeepseekV4Model.load_weights.
+assert "\"layers.0.ffn.gate.bias\"" not in s, "pre-mapper spelling is back"
+print("   patch verified in image")'
 }
 
 if [ "${1:-}" = "--local-only" ]; then build_here; exit 0; fi

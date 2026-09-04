@@ -30,6 +30,35 @@ warmup_engine() {
       -o /dev/null -w "   warmup $i: http=%{http_code} %{time_total}s\n" || true
   done
 
+  # Concurrency, not just prompt length. Repeating the GLM campaign three
+  # times against one unchanged server showed the code ladder was still
+  # settling after a single-stream warmup:
+  #
+  #   users   run 1    run 2    run 3      (tok/s served)
+  #      1      9.9     10.0     10.6
+  #      2     16.4     17.3     16.9
+  #      4     23.1     28.0     29.3
+  #      8     31.5     44.2     44.9
+  #
+  # Runs 2 and 3 agree within a few percent; run 1 does not, and the gap grows
+  # with concurrency -- 4% at one user, 42% at eight. Those prompts are 47
+  # tokens, so prefill and the radix cache explain none of it (the engine
+  # reported #cached-token: 0 on 73 of 75 prefill batches). Whatever is
+  # one-time here scales with batch, so the warmup has to reach the widest
+  # batch a cell will use, or the first campaign measures it.
+  local users="${WARMUP_USERS:-8}"
+  echo "   warmup burst: $users concurrent"
+  local pids=() i
+  for ((i = 0; i < users; i++)); do
+    curl -s --max-time 600 "$base/v1/chat/completions" \
+      -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Count to twenty, one number per line.\"}],\"max_tokens\":128,\"temperature\":0}" \
+      -o /dev/null &
+    pids+=($!)
+  done
+  wait "${pids[@]}" 2>/dev/null || true
+  echo "   warmup burst: done"
+
   # Long prompt, so the prefill path is compiled before it is measured.
   python3 - "$base" "$model" <<'PY' || true
 import json, sys, time, urllib.request

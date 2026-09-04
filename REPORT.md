@@ -83,6 +83,7 @@ Flags: `python3 -m sglang.launch_server --model-path /home/USER/models/hf/glm53-
 | rdma+mtp | agentic-33k | 30,301 | 472 | 1 | bfloat16 | 145,024 | **12.5** | 25.2 | 19161 ms | 100% | 0 |
 | qwen-rdma-mtp-eos | agentic-33k | 30,301 | 512 | 1 | bfloat16 | 166,016 | **11.0** | 24.9 | 26066 ms | 100% | 0 |
 | qwen-mtp-eos-warm | agentic-33k | 30,301 | 512 | 1 | bfloat16 | 166,016 | **10.3** | 27.9 | 27756 ms | 100% | 0 |
+| qwen-fp8kv-probe | agentic-33k | - | 0 | 1 | float8_e4m3fn | 310,656 | **0.0** | - | - | 0% | 1 |
 | control: NCCL over TCP, no MTP | agentic-33k | 30,185 | 2,716 | 6 | bfloat16 | 600,000 | **11.6** | 4.2 | 116620 ms | 100% | 0 |
 | rdma | agentic-33k | 30,185 | 2,789 | 6 | bfloat16 | 600,000 | **20.4** | 7.4 | 68850 ms | 100% | 0 |
 | rdma+mtp | agentic-33k | 30,185 | 2,954 | 6 | bfloat16 | 145,024 | **19.2** | 10.6 | 69105 ms | 100% | 0 |
@@ -94,6 +95,7 @@ Flags: `python3 -m sglang.launch_server --model-path /home/USER/models/hf/glm53-
 | mtp+fp8kv | agentic-4k | 4,318 | 512 | 1 | float8_e4m3fn | 332,480 | **21.8** | 24.3 | 2536 ms | 100% | 0 |
 | qwen-rdma-mtp-eos | agentic-4k | 4,318 | 512 | 1 | bfloat16 | 166,016 | **22.7** | 25.5 | 2526 ms | 100% | 0 |
 | qwen-mtp-eos-warm | agentic-4k | 4,318 | 512 | 1 | bfloat16 | 166,016 | **18.2** | 23.7 | 6571 ms | 100% | 0 |
+| qwen-fp8kv-probe | agentic-4k | 4,318 | 64 | 1 | float8_e4m3fn | 310,656 | **6.6** | 17.5 | 6143 ms | 100% | 0 |
 | control: NCCL over TCP, no MTP | agentic-4k | 3,891 | 2,972 | 6 | bfloat16 | 600,000 | **30.0** | 6.6 | 24066 ms | 100% | 0 |
 | rdma | agentic-4k | 3,891 | 2,877 | 6 | bfloat16 | 600,000 | **50.9** | 11.8 | 15097 ms | 100% | 0 |
 | rdma+mtp | agentic-4k | 3,891 | 2,925 | 6 | bfloat16 | 145,024 | **59.0** | 14.7 | 15905 ms | 100% | 0 |

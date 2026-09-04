@@ -139,13 +139,42 @@ which is exactly what chunked prefill produces from the second chunk onward.
 fit in one chunk; the 6-user cell had three 3,891-token prompts contending
 for that budget and one of them was split.
 
-The prediction that follows is that **a single 33k-token prompt would crash
-it too**, with no concurrency at all, because 30,301 tokens cannot be one
-chunk. That cell was never measured — the server was already dead when the
-campaign reached it.
+### The prediction, and the run that confirmed it
 
-The operational conclusion does not depend on settling that: an fp8 KV cache
-on this build is unusable for the long-prompt work this project exists to
-measure, and it fails by killing the process rather than by degrading. Every
+If the trigger is the prefix and not the concurrency, then **one request with
+a 33k-token prompt crashes it**, with nothing else in flight, because 30,301
+tokens cannot be one 8,192-token chunk. That is falsifiable and cheap, so
+`scripts/probe-qwen-fp8kv.sh` runs it: same launcher, `--kv-cache-dtype
+fp8_e4m3`, the 4k cell first as the control that must pass.
+
+```
+############ agentic-4k @ 1 user -- expected: PASS (fits one 8192-token prefill chunk) ############
+# engine sglang 0.0.0.dev1+gd91c3682b | kv float8_e4m3fn | pool 310,656 tokens
+6.6 tok/s served rate   (64 output tokens / 9.7 s wall, 1 requests, 0 failed)
+needle retrieval: 1/1 verbatim
+-- server still running
+
+############ agentic-33k @ 1 user -- expected: CRASH (chunked, so prefix_lens is non-zero) ############
+[2026-09-04 05:02:53 TP1] Scheduler hit an exception: ...
+AssertionError: Unsupported rhs dtype fp8e4nv
+[2026-09-04 05:02:53] Waiting 60.0 seconds for CUDA coredumps before exiting.
+```
+
+Same assertion, same `eager_runner._execute_extend` frame, one decoding user.
+Concurrency was never the trigger. The last prefill batch the scheduler
+logged was the control's `#new-token: 4352, #running-req: 0, #queue-req: 0` —
+one sequence, one chunk, no prefix — and the 33k request produced no batch
+line at all, because that line is written after the forward pass returns and
+this one did not.
+
+**So an fp8 KV cache on this build is unusable for any prompt longer than
+`chunked_prefill_size`**, which is 8,192 by default and is the entire
+long-context case this project exists to measure. It fails by killing the
+process rather than by degrading, so it cannot be left on and watched. Every
 Qwen number in `REPORT.md` from `[qwen-rdma-mtp-eos]` onward is bfloat16 KV
 for this reason, at half the KV pool.
+
+The fix, if it is ever wanted, is a dtype conversion at the `_ck` call site or
+a Triton build whose `tl.dot` accepts `fp8e4nv` — an image change, not a flag.
+Raising `chunked_prefill_size` above the longest prompt would only move the
+boundary, and it would move it into a prefill that no longer fits.

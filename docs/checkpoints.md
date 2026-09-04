@@ -263,7 +263,7 @@ Vision-Exp's 316 extra tensors are:
 | `aligner.w{1,2}.{weight,bias}` | 4 | no |
 | `image_{start,end,pad,newline}` | 4 | no |
 | `mtp.N.ffn.gate.bias_vl` | 3 | yes — `mtp.` is skipped |
-| `layers.{0,1}.ffn.gate.bias` | 3 | no |
+| `layers.{0,1,2}.ffn.gate.bias` | 3 | no — hash-MoE layers have no router bias |
 
 So 313 of the 316 are fatal. **This build cannot load the checkpoint.**
 
@@ -274,9 +274,32 @@ text model plus a tower; the vision path reaches into routing in every layer.
 That is consistent with the tensor hashes differing, and it is a second reason
 not to read `0731`'s numbers as Vision-Exp's.
 
-It also says what a text-only load would have to do: skip `vision.`,
-`aligner.`, `image_` and `.bias_vl`, leaving the `bias` route that text tokens
-use and that is present in both checkpoints. That is a `skip_substrs` change —
+It also says what a text-only load has to do: skip `vision.`, `aligner.`,
+`image_` and `.bias_vl`, plus three named tensors —
+`layers.{0,1,2}.ffn.gate.bias`.
+
+Those three are the interesting ones, and they are why "read the engine
+source" beats "try it and see". `0731` ships 40 `layers.N.ffn.gate.bias`, for
+layers 3 through 42; Vision-Exp ships 43. vLLM maps `.ffn.gate.bias` to
+`.ffn.gate.e_score_correction_bias` and creates that parameter conditionally:
+
+```python
+is_hash_moe = extract_layer_index(prefix) < config.num_hash_layers   # 3
+if is_hash_moe:
+    # hash MoE doesn't use e_score_correction_bias
+    self.gate.tid2eid = nn.Parameter(...)
+elif getattr(config, "topk_method", None) == "noaux_tc":
+    self.gate.e_score_correction_bias = nn.Parameter(...)
+```
+
+Layers 0-2 route by a token-id → expert-id table and carry no router bias, so
+`0731`'s 40 are exactly the right shape and Vision-Exp's three extra have
+nowhere to land. They are skipped by name rather than by a `.ffn.gate.bias`
+pattern, which would also drop the 40 that layers 3-42 need.
+
+That skip is the one that removes a routing input rather than a modality. It
+should be harmless — a correction bias on a hash route is never consulted —
+but that is an argument from the architecture, not a measurement. That is a `skip_substrs` change —
 a derived image, in the pattern of `sglang-glm53:gb10-tilelang` and
 `vllm-dsv4:ray` — and any tuple it produces must record in its flags that the
 vision tower was not loaded. Which is the honest form of the comparison

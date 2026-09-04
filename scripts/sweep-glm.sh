@@ -39,8 +39,31 @@ done
 
 wait_ready "$NAME" "$BASE" "$log" || exit 1
 
-bash scripts/check-rdma.sh "$NAME" || echo "(rdma check inconclusive; see above)"
+# RUN THIS DURING THE CAMPAIGN, NOT BEFORE IT.
+#
+# check-rdma.sh's primary test reads the HCA's rx_write_requests counter and
+# needs RDMA verbs in flight to see any. Called here, before a single request
+# has been served, it can only ever report "could not tell" -- which is what
+# every sweep did, so every campaign's RoCE evidence had to be gathered by
+# hand afterwards. The check said so in its own header ("it answers during a
+# campaign and not before one") and the sweep called it before one anyway.
+#
+# Detached, it samples while the campaign generates traffic. Its verdict is
+# collected after.
+rdma_out=/tmp/rdma-$NOTE.txt
+( sleep "${RDMA_DELAY_S:-90}"; bash scripts/check-rdma.sh "$NAME" > "$rdma_out" 2>&1 ) &
+rdma_pid=$!
 
 CAMPAIGN_NOTE="$NOTE" bash scripts/campaign-glm.sh "$BASE"
+
+
+# The RoCE verdict, sampled while the campaign was running. Not fatal: the
+# cells are recorded either way, and a sweep that threw away real
+# measurements over a transport check would be worse. But a campaign that ran
+# on TCP is worth about 1.74x less than it looks (docs/interconnect.md), so
+# the answer belongs beside the numbers.
+wait "$rdma_pid" 2>/dev/null || true
+echo "== RoCE check, sampled during the campaign"
+sed 's/^/   /' "$rdma_out" 2>/dev/null || echo "   (no result)"
 
 echo "== sweep '$NOTE' done $(date -Is)"

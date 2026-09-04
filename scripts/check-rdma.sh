@@ -16,6 +16,43 @@
 # to read.
 set -uo pipefail
 
+# Three modes. The first two exist because a single timed sample is fragile:
+# on 2026-09-04 a 20-second window landed in an idle gap between warmup
+# requests and reported "delta 0 in 20s" for a campaign that turned out to
+# have issued 11,040,888 RDMA writes. The counter is monotonic, so bracketing
+# the whole campaign is strictly better than sampling inside it -- no timing
+# to get right, and the window is as long as the thing being measured.
+#
+#   check-rdma.sh --snapshot                 print the counter and exit
+#   check-rdma.sh --delta <before> <name>    verdict from a bracketed span
+#   check-rdma.sh <name>                     sample in place (interactive)
+rdma_counter_file() {
+  echo "/sys/class/infiniband/${RDMA_HCA:-rocep1s0f0}/ports/1/hw_counters/rx_write_requests"
+}
+
+if [ "${1:-}" = "--snapshot" ]; then
+  f="$(rdma_counter_file)"
+  [ -r "$f" ] || { echo "no hw_counters for ${RDMA_HCA:-rocep1s0f0}" >&2; exit 2; }
+  cat "$f"
+  exit 0
+fi
+
+if [ "${1:-}" = "--delta" ]; then
+  before="${2:?usage: check-rdma.sh --delta <before> <container>}"
+  f="$(rdma_counter_file)"
+  [ -r "$f" ] || { echo "no hw_counters for ${RDMA_HCA:-rocep1s0f0}" >&2; exit 2; }
+  after="$(cat "$f")"
+  delta=$(( after - before ))
+  echo "   rx_write_requests: $before -> $after (delta $delta over the campaign)"
+  if [ "$delta" -gt 0 ]; then
+    echo "== RoCE confirmed by the HCA's own counters"
+    exit 0
+  fi
+  echo "== NO RDMA VERBS over the whole campaign. NCCL was not on RoCE." >&2
+  echo "   Decode on cross-node TP is latency-bound; this is worth roughly 2x." >&2
+  exit 1
+fi
+
 C="${1:?usage: check-rdma.sh <container name>}"
 
 echo "== devices visible inside $C"
@@ -39,7 +76,8 @@ docker exec "$C" bash -c 'ls /sys/class/infiniband 2>/dev/null | tr "\n" " "' \
 # one.
 rdma_counter_check() {
   local hca="${RDMA_HCA:-rocep1s0f0}"
-  local f="/sys/class/infiniband/$hca/ports/1/hw_counters/rx_write_requests"
+  local f
+  f="$(rdma_counter_file)"
   [ -r "$f" ] || { echo "   no hw_counters for $hca"; return 2; }
   local a b
   a=$(cat "$f"); sleep "${RDMA_SAMPLE_S:-20}"; b=$(cat "$f")

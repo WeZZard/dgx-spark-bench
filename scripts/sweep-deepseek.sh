@@ -39,20 +39,21 @@ done
 
 wait_ready "$NAME" "$BASE" "$log" || exit 1
 
-# RUN THIS DURING THE CAMPAIGN, NOT BEFORE IT.
+# BRACKET THE CAMPAIGN, DO NOT SAMPLE INSIDE IT.
 #
-# check-rdma.sh's primary test reads the HCA's rx_write_requests counter and
-# needs RDMA verbs in flight to see any. Called here, before a single request
-# has been served, it can only ever report "could not tell" -- which is what
-# every sweep did, so every campaign's RoCE evidence had to be gathered by
-# hand afterwards. The check said so in its own header ("it answers during a
-# campaign and not before one") and the sweep called it before one anyway.
+# check-rdma.sh's primary test reads the HCA's rx_write_requests counter, and
+# needs RDMA verbs in flight to see any. Calling it here, before a single
+# request has been served, could only ever report "could not tell" -- which is
+# what every sweep did for weeks, so every campaign's RoCE evidence was
+# gathered by hand afterwards.
 #
-# Detached, it samples while the campaign generates traffic. Its verdict is
-# collected after.
-rdma_out=/tmp/rdma-$NOTE.txt
-( sleep "${RDMA_DELAY_S:-90}"; bash scripts/check-rdma.sh "$NAME" > "$rdma_out" 2>&1 ) &
-rdma_pid=$!
+# Sampling inside the campaign instead was the obvious fix and was also wrong:
+# a 20-second window landed in an idle gap between warmup requests and
+# reported "delta 0 in 20s" for a campaign that had in fact issued 11,040,888
+# RDMA writes. The counter is monotonic, so bracketing is strictly better --
+# no timing to get right, and the window is exactly as long as the thing being
+# measured.
+rdma_before="$(bash scripts/check-rdma.sh --snapshot 2>/dev/null || echo "")"
 
 # Before: the loader checks, which are all that can be asked of a cold server.
 bash scripts/check-patch4.sh "$NAME" "$BASE" || {
@@ -72,14 +73,17 @@ REQUIRE_ACCEPTANCE=1 bash scripts/check-patch4.sh "$NAME" "$BASE" \
   || echo "!! DSpark acceptance is in unpatched territory: the numbers above are suspect" >&2
 
 
-# The RoCE verdict, sampled while the campaign was running. Not fatal: the
-# cells are recorded either way, and a sweep that threw away real
-# measurements over a transport check would be worse. But a campaign that ran
-# on TCP is worth about 1.74x less than it looks (docs/interconnect.md), so
-# the answer belongs beside the numbers.
-wait "$rdma_pid" 2>/dev/null || true
-echo "== RoCE check, sampled during the campaign"
-sed 's/^/   /' "$rdma_out" 2>/dev/null || echo "   (no result)"
+# The RoCE verdict, over the whole campaign. Not fatal: the cells are recorded
+# either way, and a sweep that threw away real measurements over a transport
+# check would be worse. But a campaign that ran on TCP is worth about 1.74x
+# less than it looks (docs/interconnect.md), so the answer belongs beside the
+# numbers rather than in someone's memory.
+echo "== RoCE check, bracketing the campaign"
+if [ -n "$rdma_before" ]; then
+  bash scripts/check-rdma.sh --delta "$rdma_before" "$NAME" || true
+else
+  echo "   no counter snapshot was taken before the campaign; cannot tell."
+fi
 
 # TEAR DOWN BOTH RANKS, ALWAYS, INCLUDING AFTER A FAILED CAMPAIGN.
 #

@@ -61,13 +61,20 @@ class Audit:
         return sum(self.by_dtype.values())
 
 
-def audit(path: str) -> Audit:
-    shards = sorted(f for f in os.listdir(path) if f.endswith(".safetensors"))
-    if not shards:
-        raise FileNotFoundError(f"no safetensors shards in {path}")
-    a = Audit(path=path, shards=len(shards))
-    for s in shards:
-        for name, meta in read_header(os.path.join(path, s)).items():
+def audit_headers(path: str, headers) -> Audit:
+    """Tally an already-read sequence of safetensors headers.
+
+    Split out of `audit` so a checkpoint that is not on this disk can be
+    measured by the SAME arithmetic. The headers sit in the first few hundred
+    kilobytes of each shard, so a remote checkpoint can be audited over HTTP
+    range requests for a few megabytes instead of downloading 156 GiB -- but
+    only if the two paths share this function. Two audit implementations would
+    be two formulas for one quantity, which is the thing CLAUDE.md forbids.
+    """
+    headers = list(headers)
+    a = Audit(path=path, shards=len(headers))
+    for hdr in headers:
+        for name, meta in hdr.items():
             if name == "__metadata__":
                 continue
             lo, hi = meta["data_offsets"]
@@ -81,6 +88,13 @@ def audit(path: str) -> Audit:
             elif dt in SCALE_FORMATS and "scale" in name.lower():
                 a.pairs[c][dt] += nb
     return a
+
+
+def audit(path: str) -> Audit:
+    shards = sorted(f for f in os.listdir(path) if f.endswith(".safetensors"))
+    if not shards:
+        raise FileNotFoundError(f"no safetensors shards in {path}")
+    return audit_headers(path, (read_header(os.path.join(path, s)) for s in shards))
 
 
 def derive_formats(a: Audit) -> list[tuple[str, str, float, bool]]:

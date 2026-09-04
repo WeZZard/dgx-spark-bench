@@ -42,7 +42,14 @@ REPLACEMENT = (
     '            # docker/patch-vllm-dsv4-textonly.py. Without these, loading\n'
     '            # DeepSeek-V4-Flash-Vision-Exp raises on its first vision\n'
     '            # tensor. A run made this way has no image path.\n'
-    '            skip_substrs=["mtp.", "vision.", "aligner.", "image_", ".bias_vl"],\n'
+    '            skip_substrs=[\n'
+    '                "mtp.", "vision.", "aligner.", "image_", ".bias_vl",\n'
+    '                # hash-MoE layers (num_hash_layers=3) route by tid2eid and\n'
+    '                # have no e_score_correction_bias to receive these.\n'
+    '                "layers.0.ffn.gate.bias",\n'
+    '                "layers.1.ffn.gate.bias",\n'
+    '                "layers.2.ffn.gate.bias",\n'
+    '            ],\n'
     '        )'
 )
 

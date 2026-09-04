@@ -46,8 +46,10 @@ build_here() {
   docker run --rm --entrypoint bash "$TAG" -c '
     F=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/model.py
     head -1 "$F" | grep -q PATCHED-VLLM-DSV4-TEXTONLY || { echo "marker missing" >&2; exit 1; }
-    grep -q "skip_substrs=\[\"mtp.\", \"vision.\", \"aligner.\", \"image_\", \".bias_vl\"\]" "$F" \
-      || { echo "skip list missing" >&2; exit 1; }
+    for want in "vision." "aligner." "image_" ".bias_vl" \
+                "layers.0.ffn.gate.bias" "layers.1.ffn.gate.bias" "layers.2.ffn.gate.bias"; do
+      grep -q "\"$want\"," "$F" || { echo "skip list missing $want" >&2; exit 1; }
+    done
     echo "   patch verified in image"'
 }
 

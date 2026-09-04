@@ -88,15 +88,21 @@ def probe_kv_pool(base: str, container: str | None = None,
     except Exception:
         pass
 
-    # 2. vLLM publishes the block count on /metrics; tokens = blocks * block_size.
+    # 2. vLLM states the pool directly on /metrics, in vllm:cache_config_info.
+    #
+    # Take kv_cache_size_tokens and do NOT derive one from
+    # num_gpu_blocks * block_size. On DeepSeek-V4 with fp8_ds_mla those read
+    # 14857 and 4, giving 59,428 -- while the same metric says
+    # kv_cache_size_tokens="505407" and the engine's own startup line says
+    # "GPU KV cache size: 505,407 tokens". block_size here is not tokens per
+    # block in the sense the product assumes, and under MLA it is not going to
+    # be. An 8.5x error in a required tuple field, arrived at by computing
+    # something the engine was willing to state outright.
     try:
         text = _get(base, "/metrics").text
-        blocks = re.search(r'num_gpu_blocks="?([\d.]+)"?', text)
-        bsz = re.search(r'block_size="?([\d.]+)"?', text)
-        if blocks and bsz:
-            n = int(float(blocks.group(1)) * float(bsz.group(1)))
-            if n > 0:
-                return n, "http:/metrics:num_gpu_blocks*block_size"
+        m = re.search(r'kv_cache_size_tokens="?(\d+)"?', text)
+        if m and int(m.group(1)) > 0:
+            return int(m.group(1)), "http:/metrics:cache_config_info.kv_cache_size_tokens"
     except Exception:
         pass
 
@@ -172,4 +178,17 @@ def probe_kv_cache_dtype(base: str, container: str | None = None,
                     "find the allocated dtype before publishing this run")
     except Exception:
         pass
+    # vLLM has no /get_server_info; it puts the resolved dtype on /metrics.
+    # Without this branch a DeepSeek run launched with an explicit
+    # --kv-cache-dtype fp8_ds_mla recorded its KV cache as "default", which is
+    # the reading CLAUDE.md reserves for "no flag was passed" -- so the field
+    # said the opposite of what happened.
+    try:
+        text = _get(base, "/metrics").text
+        m = re.search(r'\bcache_dtype="([^"]+)"', text)
+        if m and m.group(1) != "auto":
+            return m.group(1), "http:/metrics:cache_config_info.cache_dtype (resolved by the engine)"
+    except Exception:
+        pass
+
     return "default", "unread: engine did not report it -- resolve before publishing"

@@ -1,0 +1,11 @@
+# vllm-dsv4:ray with one change: the DeepseekV4 weight loader skips the
+# tensors a vision checkpoint carries and a text-only model cannot place.
+# Everything else is the image the other DeepSeek rows were measured on.
+#
+# A separate tag on purpose. The engine field of a recorded tuple names what
+# ran, and a run that skipped a checkpoint's vision tower did not run the same
+# engine as one that had nothing to skip.
+ARG BASE=vllm-dsv4:ray
+FROM ${BASE}
+COPY patch-vllm-dsv4-textonly.py /tmp/patch-vllm-dsv4-textonly.py
+RUN python3 /tmp/patch-vllm-dsv4-textonly.py && rm /tmp/patch-vllm-dsv4-textonly.py

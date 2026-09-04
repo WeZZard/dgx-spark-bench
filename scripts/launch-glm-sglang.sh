@@ -105,12 +105,38 @@ GLM_EP="${GLM_EP:-on}"                      # expert parallelism: see note 1
 # GLM_ALLOW_UNREACHABLE_DSA=1 says the failure is the point.
 GLM_DSA="${GLM_DSA:-tilelang}"
 GLM_KV_DTYPE="${GLM_KV_DTYPE:-bfloat16}"
-GLM_MEM="${GLM_MEM:-0.92}"
+# Read by the GLM_MEM branch below, so it is set before it, not with its
+# siblings further down. `set -u` turns the other order into a crash.
+GLM_SPEC="${GLM_SPEC:-on}"
+# 0.92 is the published value and it is right for GLM with no drafter -- every
+# no-speculation row in REPORT.md was measured at it. It is NOT right with the
+# DFlash2 drafter, which adds the 2.2 GiB draft model, five layers of draft KV
+# and 1.48 GB of draft-verify CUDA graphs on top. At 0.92 that left 0.15 GiB
+# free, and GLM loads several Triton kernels lazily after serving starts. The
+# engine said so itself, repeatedly, and then hung:
+#
+#   Triton kernel 'alloc_extend_kernel' device-loaded after serving started
+#   (free device mem: 0.15 GiB). Pre-load it during engine init to avoid CUDA OOM.
+#   ...
+#   Scheduler watchdog timeout (self.watchdog_timeout=300, self.soft=False)
+#
+# Not an OOM exception and not a kernel fault -- no forward progress for five
+# minutes, three cells into the campaign, and rank 1 then outlived rank 0
+# holding 120 of 121 GiB.
+#
+# So the default depends on whether a drafter is loaded. Lowering it shrinks
+# the KV pool, which is a tuple field and is recorded, and GLM's pool has
+# room to lose: 802,560 tokens against a campaign whose largest cell needs
+# 8 x 33k.
+if [ "$GLM_SPEC" = "on" ]; then
+  GLM_MEM="${GLM_MEM:-0.85}"
+else
+  GLM_MEM="${GLM_MEM:-0.92}"
+fi
 GLM_MAMBA="${GLM_MAMBA:-40}"
 GLM_MAMBA_DTYPE="${GLM_MAMBA_DTYPE:-bfloat16}"
 GLM_RUNNING="${GLM_RUNNING:-8}"
 GLM_CTX="${GLM_CTX:-131072}"
-GLM_SPEC="${GLM_SPEC:-on}"
 GLM_SPEC_TOKENS="${GLM_SPEC_TOKENS:-8}"
 # Same fix as Qwen needed, for the same reason and found the same way: at load
 # time this build logs "FlashInfer TRTLLM MoE deferred finalize is disabled

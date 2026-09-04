@@ -66,4 +66,22 @@ wait "$rdma_pid" 2>/dev/null || true
 echo "== RoCE check, sampled during the campaign"
 sed 's/^/   /' "$rdma_out" 2>/dev/null || echo "   (no result)"
 
+# TEAR DOWN BOTH RANKS, ALWAYS, INCLUDING AFTER A FAILED CAMPAIGN.
+#
+# The teardown at the top of this script runs before the NEXT sweep, which is
+# no help at all if there is not going to be one. On 2026-09-04 a GLM run hit
+# a scheduler watchdog timeout, rank 0 died, and rank 1 stayed up holding
+# 120 of 121 GiB for as long as nobody looked -- the exact "a rank left
+# holding 90 GB" state the header at the top warns about, reached from the
+# other end.
+#
+# A rank that survived its peer is not serving anything; it is only holding
+# memory. Remove it here so the machine is left usable whatever happened
+# above.
+echo "== tearing down both ranks"
+for host in "" "$WORKER"; do
+  if [ -z "$host" ]; then docker rm -f "$NAME" >/dev/null 2>&1 || true
+  else ssh -o ConnectTimeout=30 "$host" "docker rm -f '$NAME' >/dev/null 2>&1 || true"; fi
+done
+
 echo "== sweep '$NOTE' done $(date -Is)"

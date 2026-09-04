@@ -264,8 +264,34 @@ def cmd_report(a) -> int:
                     f"{r['needle']:.0%}" if r["needle"] is not None else "-",
                     int(r["failed"]) if r["failed"] is not None else "-"))
         out.append("")
-        out.append(f"Image: `{first['engine_image']}`  ")
-        out.append(f"Flags: `{first['flags'] or '-'}`")
+        # ONE FLAGS LINE PER CONFIGURATION, NOT PER MODEL.
+        #
+        # This used to print `first['engine_image']` and `first['flags']` once
+        # for the whole model, taken from whichever row sorted first. The
+        # moment a model had two configurations that stopped being true: GLM's
+        # DFlash2 rows sat under a flags line that said
+        # --mem-fraction-static 0.92 and named no drafter, while the rows
+        # themselves were measured at 0.90 with one. Engine and flags are
+        # tuple fields, and a tuple field that describes a different run than
+        # the row it sits under is exactly what Rule 1 exists to stop.
+        by_config: dict[str, list] = {}
+        for r in rs:
+            by_config.setdefault(_config_of(r["notes"]), []).append(r)
+        out.append("### engine and flags, per configuration\n")
+        for cfg, crs in by_config.items():
+            images = sorted({c["engine_image"] for c in crs})
+            flagsets = sorted({(c["flags"] or "-") for c in crs})
+            out.append(f"**{cfg}** — {len(crs)} row(s)  ")
+            out.append(f"Image: `{'`, `'.join(images)}`  ")
+            for fl in flagsets:
+                out.append(f"Flags: `{fl}`  ")
+            # A configuration whose rows disagree about the engine or the
+            # flags is not one configuration. Say so rather than printing the
+            # first and hoping.
+            if len(images) > 1 or len(flagsets) > 1:
+                out.append("**These rows do not share one engine/flags tuple "
+                           "and must not be compared with each other.**  ")
+            out.append("")
 
     text = scrub("\n".join(out))
     print(text)

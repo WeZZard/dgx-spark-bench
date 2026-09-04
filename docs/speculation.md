@@ -191,10 +191,21 @@ Judge an agentic workload against the 1.48-1.62x rows, never against 2.75x.
 
 ## What it costs
 
-**The KV pool falls from 802,560 tokens to 138,304 — a factor of 5.8.** Draft
-weights and draft KV are charged to the same static budget, and
-`--mem-fraction-static` had to come down from 0.92 to 0.90 on top (see
-`scripts/launch-glm-sglang.sh` for the window and why 0.85 does not exist).
+**The KV pool falls from 802,560 tokens to 138,304 — a factor of 5.8**, and
+it is worth splitting that in two, because both halves are measured:
+
+| configuration | mem-fraction | KV pool |
+|---|---:|---:|
+| `glm-eos-warm`, no drafter | 0.92 | 802,560 |
+| `glm-dflash2-mem92` | 0.92 | 244,480 |
+| `glm-dflash2-mem90` | 0.90 | 138,304 |
+
+The drafter itself costs **3.3x** of the pool at an unchanged memory fraction:
+draft weights and draft KV are charged to the same static budget. Dropping the
+fraction to 0.90 to buy back the dynamic headroom that `mem92` hung for costs a
+further **1.77x**. `mem92` is in `REPORT.md` with its four cells and no more,
+because it hit a scheduler watchdog on the fifth; see
+`scripts/launch-glm-sglang.sh` for the window and why 0.85 does not exist.
 
 That is not free at long context. Eight concurrent 33k prompts need 264,192
 tokens of pool and there are 138,304, so the 8-user 33k cell cannot have held

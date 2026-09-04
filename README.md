@@ -52,26 +52,34 @@ comparable, since GLM's ladder runs to 8 users and DeepSeek's and Qwen's to
 
 | workload | DeepSeek-V4-Flash-0731 | Qwen3.8-Flash-Next | GLM-5.3-Flash | lead |
 |---|---:|---:|---:|---:|
-| short prompt | **44.1** | 26.5 | 10.3 | 1.66x |
-| code | **32.8** | 23.9 | 10.0 | 1.37x |
-| agentic, 4k context | 26.2 | 22.7 | 9.7 | 1.15x |
-| agentic, 33k context | 13.9 | 11.0 | 7.3 | 1.26x |
+| short prompt | **44.1** | 26.5 | 28.3 | 1.56x |
+| code | **32.8** | 23.9 | 15.4 | 1.37x |
+| agentic, 4k context | 26.2 | 22.7 | 15.7 | 1.15x |
+| agentic, 33k context | 13.9 | 11.0 | 10.8 | 1.26x |
 
 At each model's own published concurrency:
 
 | workload | DeepSeek @ 6 | Qwen @ 6 | GLM @ 8 | lead |
 |---|---:|---:|---:|---:|
 | short prompt | 89.6 | 96.6 | – | 1.08x |
-| code | 40.2 | **87.3** | 45.7 | 1.91x |
-| agentic, 4k context | 54.6 | 43.4 | 24.4 | 1.26x |
-| agentic, 33k context | **17.7** | 11.2 | 13.5 | 1.31x |
+| code | 40.2 | **87.3** | 45.3 | 1.93x |
+| agentic, 4k context | 54.6 | 43.4 | 33.8 | 1.26x |
+| agentic, 33k context | 17.7 | 11.2 | 14.5 | 1.22x |
 
 Served rate throughout. **Lead** is the top cell over the runner-up, and only
-the bold ones clear the 1.3x that one server reads differently by when the
-same campaign is repeated against it (see the end of this file). In the four
-unbolded rows the leader is not separated from the model behind it by this
-data, and the 1.31x row only just is. Full six-field tuples, with the KV pool
-each was measured against, are in `REPORT.md` — generated, never hand-edited.
+the three bold ones clear the 1.3x that one server reads differently by when
+the same campaign is repeated against it (see the end of this file). In the
+other five rows the leader is not separated from the model behind it by this
+data and is not marked as if it were.
+
+Adding GLM's drafter moved one row across that line in the direction people
+usually do not report: at 33k context and full concurrency GLM went 13.5 →
+14.5, which narrows DeepSeek's lead from 1.31x to **1.22x** and takes it below
+the threshold. The lead did not become false — it became unsupported, which is
+a different thing and is why the bold is gone rather than the row.
+
+Full six-field tuples, with the KV pool each was measured against, are in
+`REPORT.md` — generated, never hand-edited.
 
 The configurations behind those numbers, and why each differs from the
 published one:
@@ -84,9 +92,13 @@ published one:
 - **Qwen**: NVFP4 with NEXTN speculation over RoCE, bf16 KV. Enabling MTP
   cut the measured KV pool from 600,000 tokens to 145,024 with the same
   `--max-total-tokens`. `docs/speculation.md`, `docs/interconnect.md`.
-- **GLM**: bfloat16 KV, 800,448-token pool, **no speculation**. The published
-  fp8 KV path is unreachable for this checkpoint's architecture on GB10, and
-  the DSA kernel needed a shared-memory fix to run at all. `docs/glm-dsa.md`.
+- **GLM**: bfloat16 KV, **DFlash2 speculation**, 138,304-token pool,
+  `--mem-fraction-static 0.90`. The published fp8 KV path is unreachable for
+  this checkpoint's architecture on GB10 and the DSA kernel needed a
+  shared-memory fix to run at all (`docs/glm-dsa.md`). The drafter is worth
+  **2.75x at one user and nothing at eight**, and costs 5.8x of the KV pool —
+  the no-speculation rows are still in `REPORT.md` as `glm-eos-warm` and are
+  the better configuration above four users. `docs/speculation.md`.
 
 Findings, each written up with the evidence that supports it:
 
@@ -114,6 +126,12 @@ Findings, each written up with the evidence that supports it:
   101,376-byte limit. The working tuning was found by compiling the kernel
   standalone in about a minute, after three seventeen-minute weight loads had
   each ended in a different failure. `docs/glm-dsa.md`.
+- **GLM's drafter is worth 2.75x at one user and nothing at eight.** DFlash2
+  raises short-prompt served rate from 10.3 to 28.3 tok/s, and the ratio falls
+  monotonically with concurrency until the 8-user code cell is a dead heat.
+  Measured acceptance is 39.6%, not the published 74.1%, on workloads that are
+  code and agentic context rather than short continuations. It costs 5.8x of
+  the KV pool. `docs/speculation.md`.
 - **The published DeepSeek row does not say what it appears to say.** Its
   "NVFP4" is the KV cache, its headline throughput belongs to the text model
   rather than the vision one, and its engine version matches neither source.

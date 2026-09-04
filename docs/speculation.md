@@ -158,3 +158,89 @@ At one user, MTP is a clear win everywhere: 1.15x to 1.54x. At six users it
 narrows to 1.07x-1.24x, and at six users on long agentic context it is a small
 loss. Whether to run it is therefore a workload decision, not a tuning default,
 until the pool is bought back.
+
+---
+
+# GLM's DFlash2 drafter is worth 2.75x at one user and nothing at eight
+
+Measured 2026-09-04, `[glm-dflash2-mem90]` in `REPORT.md`, against
+`[glm-eos-warm]` — the same server configuration with `GLM_SPEC=off`. Served
+rate, `--ignore-eos`, zero failures, needle 100% in every agentic cell.
+
+| workload | users | no drafter | DFlash2 | ratio |
+|---|---:|---:|---:|---:|
+| short | 1 | 10.3 | **28.3** | **2.75x** |
+| agentic-4k | 1 | 9.7 | **15.7** | 1.62x |
+| code | 1 | 10.0 | **15.4** | 1.54x |
+| agentic-33k | 1 | 7.3 | **10.8** | 1.48x |
+| code | 2 | 17.4 | **24.1** | 1.39x |
+| agentic-4k | 8 | 24.4 | **33.8** | 1.39x |
+| code | 4 | 29.7 | **38.5** | 1.30x |
+| agentic-33k | 8 | 13.5 | 14.5 | 1.07x |
+| code | 8 | 45.7 | 45.3 | 0.99x |
+
+**The ratio falls monotonically with concurrency, to nothing.** That is what
+speculative decoding is: it spends compute to buy latency, and at eight
+in-flight requests there is no spare compute to spend. The 8-user code cell is
+a dead heat, and one repeat of a GLM campaign moves cells by up to 1.3x
+anyway, so 0.99x means "no effect" rather than "slightly worse".
+
+`short` at 2.75x against `code` at 1.54x, at the same one user, is
+content: a short predictable continuation is drafted well and code is not.
+Judge an agentic workload against the 1.48-1.62x rows, never against 2.75x.
+
+## What it costs
+
+**The KV pool falls from 802,560 tokens to 138,304 — a factor of 5.8.** Draft
+weights and draft KV are charged to the same static budget, and
+`--mem-fraction-static` had to come down from 0.92 to 0.90 on top (see
+`scripts/launch-glm-sglang.sh` for the window and why 0.85 does not exist).
+
+That is not free at long context. Eight concurrent 33k prompts need 264,192
+tokens of pool and there are 138,304, so the 8-user 33k cell cannot have held
+all eight contexts resident — some of it is queueing, which is part of why
+that row is the one with no gain. It answered all eight needles verbatim, so
+this is a throughput cost and not a correctness one.
+
+## Acceptance, measured rather than quoted
+
+41 logged decode batches across the campaign:
+
+```
+mean accept len = 3.78 of 8 drafted     mean accept rate = 0.396
+```
+
+`BASELINE.md` quotes **74.1%** for DFlash2. This is 39.6%, roughly half, on
+this project's workloads — which are code, prose and agentic context rather
+than the short predictable continuations published figures are usually taken
+on. The `short` cell's 2.75x is what a high-acceptance workload looks like
+here; everything else is what 40% buys.
+
+## Decode rate tells a different and also true story
+
+Labelled as decode rate throughout, and used here for the one thing it is for
+— how generation holds up as the prompt grows:
+
+| workload | users | no drafter | DFlash2 | ratio |
+|---|---:|---:|---:|---:|
+| short | 1 | 10.3 | 29.1 | 2.83x |
+| agentic-33k | 1 | 10.7 | 27.2 | 2.54x |
+| code | 1 | 10.1 | 15.9 | 1.57x |
+| code | 8 | 5.8 | 8.0 | 1.38x |
+
+`agentic-33k @ 1` is the pair worth staring at. Decode is 2.54x faster and
+served rate is only 1.48x, because time-to-first-token on a 26,535-token
+prompt is 28.6 seconds and the drafter does nothing for prefill. A drafter
+speeds up generation; it does not speed up reading. Served rate is this
+project's formula precisely so that the 28.6 seconds is not quietly dropped.
+
+## The published warning did not hold
+
+`BASELINE.md` carries a warning that the tilelang DSA kernel "overflows shared
+memory on GB10 at 8-token verify", which is why GLM was measured without a
+drafter for so long. With the `block_I=32, num_stages=1, threads=128` tuning
+in `sglang-glm53:gb10-tilelang` it does not: the draft-verify CUDA graph
+captures at `num_tokens_per_req=8` for `bs=[1..8]` and the campaign runs
+clean. The overflow the warning describes is the *stock* tuning's, and it was
+already fixed for the no-speculation rows — nobody had checked whether the fix
+also covered verify. It does.

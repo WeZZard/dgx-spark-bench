@@ -119,7 +119,7 @@ Findings, each written up with the evidence that supports it:
     docs/engines.md      what each engine image can actually do
     docs/glm-dsa.md      which GLM sparse-attention kernel can run on GB10
     docs/interconnect.md the RoCE finding, with the A/B that supports it
-    docs/qwen-qsa.md     the long-context corruption question, and how to settle it
+    docs/qwen-qsa.md     the long-context corruption question, and the fp8 KV crash
     docs/speculation.md  what MTP costs in KV pool, and what it buys
     src/sparkbench/      the harness: one rate formula, one tuple, one database
     scripts/             launchers, sweeps, the GB10 memory guard and the checks
@@ -130,10 +130,17 @@ Findings, each written up with the evidence that supports it:
 
     scripts/sparkbench selftest                    # the formulas and the tuple rule
     scripts/audit-checkpoint.py <path> --verify    # what a checkpoint really is
+    scripts/audit-remote-checkpoint.py <repo> --revision <sha> --verify
+    scripts/compare-checkpoints.py <path> <repo> --revision <sha>
     bash scripts/build-sglang-glm53-gb10.sh        # GLM needs a patched kernel
     bash scripts/build-vllm-ray.sh                 # DeepSeek needs ray in the image
     CONFIG_NOTE=<name> bash scripts/sweep-glm.sh   # one configuration, every cell
     scripts/sparkbench report --out REPORT.md
+
+The two remote tools read safetensors headers over HTTP range requests, so
+they answer "what is this checkpoint" and "are these the same weights" for
+megabytes rather than for the checkpoint's size. Both take a 40-character sha
+and refuse a branch name.
 
 `bring-up.sh` refuses to start a launcher that has no clean run behind it
 unless `ATTENDED=1`, because on GB10 a container memory cap does not bound what

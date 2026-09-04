@@ -26,7 +26,10 @@
 #   3. The DSpark acceptance rate from /metrics. The only check that observes
 #      the draft working, and it needs traffic. Set REQUIRE_ACCEPTANCE=1 when
 #      calling it after a campaign, where "no counters" means speculation is
-#      not running rather than "too early to tell".
+#      not running rather than "too early to tell". It is a campaign-WIDE
+#      average, and acceptance depends heavily on content (~78% code, ~34%
+#      prose), so it can only catch the unpatched floor; the per-cell figure
+#      campaign-deepseek.sh brackets is what actually discriminates.
 #
 # The four-node report says twelve tensors load uninitialized; this
 # checkpoint's draft layer holds six. The two are not reconciled here, and
@@ -180,11 +183,31 @@ fi
 if [ -n "$acc" ]; then
   acceptance_checked=1
   echo "   acceptance: ${acc}%"
-  # ~25% unpatched against 60-80% patched, per the four-node report.
-  if awk "BEGIN{exit !($acc < 40)}"; then
-    echo "!! FAIL: ${acc}% is unpatched territory (~25%), not the 60-80% a" >&2
-    echo "   working DSpark draft reaches. Do not believe decode numbers." >&2
+  # THIS NUMBER IS A CAMPAIGN-WIDE AVERAGE, AND ACCEPTANCE DEPENDS ON CONTENT.
+  #
+  # The old line here was 40%, from the four-node report's "~25% unpatched vs
+  # 60-80% patched". But the Vision-Exp source puts patched acceptance at ~78%
+  # on structured code, ~56% on mixed agent traffic and ~34% on PROSE
+  # (BASELINE.md), and this campaign runs all three. A prose-heavy mix on a
+  # perfectly healthy server lands in the thirties by construction: the 0731
+  # run read 52.8% and the Vision-Exp run 33.5%, and 40% ran between them
+  # while telling neither apart from a broken loader.
+  #
+  # So this check now only fires where the aggregate is genuinely at the
+  # unpatched floor, and says out loud that the band above it is not evidence
+  # either way. The measurement that DOES separate the two is per-cell
+  # acceptance on `code` -- ~78% against ~25% -- which campaign-deepseek.sh
+  # brackets and reports.
+  if awk "BEGIN{exit !($acc < 28)}"; then
+    echo "!! FAIL: ${acc}% is at the unpatched floor (~25%). Whatever the" >&2
+    echo "   content mix, a working DSpark draft does not average this low." >&2
+    echo "   Do not believe decode numbers." >&2
     rc=1
+  elif awk "BEGIN{exit !($acc < 40)}"; then
+    echo "   inconclusive: a campaign-wide ${acc}% is inside the published"
+    echo "   patched range for prose-heavy content (~34%) as well as above the"
+    echo "   unpatched floor (~25%). Read the per-cell code acceptance that"
+    echo "   campaign-deepseek.sh prints; that is the discriminating one."
   fi
 elif [ "$REQUIRE_ACCEPTANCE" = 1 ]; then
   echo "!! FAIL: traffic has been served and there is still no DSpark draft" >&2

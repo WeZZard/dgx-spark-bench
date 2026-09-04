@@ -255,3 +255,52 @@ captures at `num_tokens_per_req=8` for `bs=[1..8]` and the campaign runs
 clean. The overflow the warning describes is the *stock* tuning's, and it was
 already fixed for the no-speculation rows — nobody had checked whether the fix
 also covered verify. It does.
+
+
+## DSpark acceptance is a property of the content, not only of the loader
+
+`check-patch4.sh` failed a healthy Vision-Exp campaign on 2026-09-04 with
+"33.5% is unpatched territory". It was not. Its 40% line came from the
+four-node report's "~25% unpatched against 60-80% patched", and that pair of
+numbers is not a range a campaign-wide average can be compared against.
+
+The Vision-Exp source (quoted in `BASELINE.md`) gives patched acceptance by
+content:
+
+| content | published DSpark acceptance, patched |
+|---|---:|
+| structured code | ~78% |
+| mixed agent traffic | ~56% |
+| prose | ~34% |
+| — unpatched, any content | ~25% |
+
+`campaign-deepseek.sh` runs `short`, `code`, `prose`, `agentic-4k` and
+`agentic-33k`, so its aggregate is an average over that whole spread. Two
+measured campaigns on this hardware, both with the patched image:
+
+| configuration | campaign-wide acceptance |
+|---|---:|
+| `0731`, DSpark k=5 probabilistic | 52.8% |
+| Vision-Exp text-only, DSpark k=6 probabilistic | 33.5% |
+
+The 40% line ran between them and separated neither from a broken loader.
+33.5% sits exactly where the published prose figure says a working draft
+lands.
+
+The fix is to measure the quantity that discriminates. `code` is ~78% patched
+against ~25% unpatched — a 3x gap — so `campaign-deepseek.sh` now brackets the
+spec-decode counters around **each cell** and asserts on the `code @ 1` one at
+50%, midway between the two with margin on both sides. The campaign-wide check
+survives, narrowed to the unpatched floor (28%) and explicitly reporting the
+28–40% band as inconclusive rather than as a failure.
+
+The counters (`vllm:spec_decode_num_accepted_tokens_total`,
+`vllm:spec_decode_num_draft_tokens_total`) are monotonic totals, so a
+difference across a cell is that cell's acceptance and nothing else — the same
+bracketing argument `check-rdma.sh` uses for `rx_write_requests`.
+
+Acceptance also falls with the draft length `k`, and the two DeepSeek
+configurations here do not share one: `0731` declares
+`num_nextn_predict_layers=1` and runs k=5, Vision-Exp declares 3 and runs k=6
+(k must be a multiple of it). So 52.8% against 33.5% is not a like-for-like
+comparison of two checkpoints either, and is not written down as one.

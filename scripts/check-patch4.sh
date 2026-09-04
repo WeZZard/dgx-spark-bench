@@ -75,25 +75,63 @@ if not n_layers or not n_draft:
     print(f"   no draft layer declared (num_nextn_predict_layers={n_draft})")
     sys.exit(2)
 
-per_layer = collections.Counter()
+# THE DRAFT LAYERS ARE NAMED mtp.N, NOT layers.<n_layers - n_draft ..>.
+#
+# This used to compute draft_layers = range(n_layers - n_draft, n_layers) and
+# look for them under `layers.`, which on both DeepSeek checkpoints here means
+# layers 40, 41 and 42 -- ordinary BODY layers. It then compared their
+# shared-expert count against the other body layers and found, inevitably,
+# that 6 equals 6. The check passed by tautology on every run and never once
+# looked at the DSpark draft it exists to check.
+#
+# Measured on deepseek-ai/DeepSeek-V4-Flash-0731: 276 shared-expert tensors,
+# 258 under `layers.` (43 layers x 6) and 18 under `mtp.` (3 x 6).
+body = collections.Counter()
+draft = collections.Counter()
 for n in idx["weight_map"]:
-    if "shared_expert" in n:
-        m = re.search(r"layers\.(\d+)\.", n)
-        if m:
-            per_layer[int(m.group(1))] += 1
+    if "shared_expert" not in n:
+        continue
+    m = re.match(r"mtp\.(\d+)\.", n)
+    if m:
+        draft[int(m.group(1))] += 1
+        continue
+    m = re.search(r"layers\.(\d+)\.", n)
+    if m:
+        body[int(m.group(1))] += 1
 
-draft_layers = list(range(n_layers - n_draft, n_layers))
-body = [c for l, c in per_layer.items() if l not in draft_layers]
-expect = max(set(body), key=body.count) if body else None
-print(f"   {n_layers} layers, last {n_draft} is the DSpark draft; "
-      f"body layers carry {expect}")
+if not draft:
+    print(f"   no mtp.* shared-expert tensors in the index; this checkpoint "
+          f"does not name its draft that way and this check cannot speak to it")
+    sys.exit(2)
+
+counts = list(body.values())
+expect = max(set(counts), key=counts.count) if counts else None
+print(f"   {len(body)} body layers carry {expect} shared-expert tensors each; "
+      f"{len(draft)} draft layer(s) under mtp.*")
 bad = False
-for L in draft_layers:
-    got = per_layer.get(L, 0)
+for L in sorted(draft):
+    got = draft[L]
     ok = (got == expect)
-    print(f"   layer {L}: {got} shared-expert tensors -- "
+    print(f"   mtp.{L}: {got} shared-expert tensors -- "
           f"{'matches the body layers' if ok else f'DIFFERS from body ({expect})'}")
     bad = bad or not ok
+# Reported, NOT enforced. deepseek-ai/DeepSeek-V4-Flash-0731 declares
+# num_nextn_predict_layers=1 and ships three mtp layers; Vision-Exp declares
+# 3 and ships three. The config field evidently does not mean "how many mtp
+# blocks are in the checkpoint", so a mismatch here is not evidence of
+# anything and must not fail the gate. Making it fatal would have turned a
+# working configuration into a refusal on the first run after this fix.
+if len(draft) != n_draft:
+    print(f"   (config num_nextn_predict_layers={n_draft}, index has "
+          f"{len(draft)} mtp layer(s) -- these need not agree)")
+
+# AND SAY WHAT THIS CANNOT DO. Patch 4 is a LOADER fix: the tensors are in
+# every checkpoint either way, and without the patch they are read into
+# uninitialized memory at load time. A count taken from the index therefore
+# proves the checkpoint is well formed and proves nothing about the loader.
+# Only check 3, the acceptance rate, observes the draft actually working.
+print("   (this counts the checkpoint, not the load: only the acceptance "
+      "rate below can see the loader bug this patch fixes)")
 sys.exit(3 if bad else 0)
 INNER
 )

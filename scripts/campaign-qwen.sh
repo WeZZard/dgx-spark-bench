@@ -23,6 +23,7 @@
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$here/scripts/lib/warmup.sh"
 BASE="${1:-http://127.0.0.1:30000}"
 IMAGE="${QWEN_IMAGE:-sglang-qwen38fn:sm121-ours}"
 MODEL_DIR="${QWEN_MODEL_DIR:-/home/station/models/hf/qwen38-flash-next-nvfp4}"
@@ -73,31 +74,7 @@ cell() {
 # look like a slow configuration. Warming is not massaging the number: the
 # compilation happens once per server, not once per request, so charging it to
 # one cell would misreport every cell.
-warmup() {
-  echo "== warmup (discarded): compiling kernels at serving time"
-  for i in 1 2 3; do
-    curl -s --max-time 300 "$BASE/v1/chat/completions" \
-      -H 'Content-Type: application/json' \
-      -d '{"model":"qwen38-flash-next","messages":[{"role":"user","content":"Write one sentence about caching."}],"max_tokens":64,"temperature":0}' \
-      -o /dev/null -w "   warmup $i: http=%{http_code} %{time_total}s\n" || true
-  done
-  # a long prompt too, so the prefill path is compiled before it is measured
-  python3 - "$BASE" <<'PY' || true
-import json, sys, urllib.request
-base = sys.argv[1]
-body = {"model": "qwen38-flash-next",
-        "messages": [{"role": "user", "content": "ok " * 6000 + "\nReply with one word."}],
-        "max_tokens": 16, "temperature": 0}
-req = urllib.request.Request(base + "/v1/chat/completions",
-                             data=json.dumps(body).encode(),
-                             headers={"Content-Type": "application/json"})
-try:
-    urllib.request.urlopen(req, timeout=600).read()
-    print("   warmup long-prompt: ok")
-except Exception as e:
-    print(f"   warmup long-prompt: {e}")
-PY
-}
+warmup() { warmup_engine "$BASE" "qwen38-flash-next"; }
 warmup
 
 # The like-for-like cell first: published conditions are a ~22-token prompt.

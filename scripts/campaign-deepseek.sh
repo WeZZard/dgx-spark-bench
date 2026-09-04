@@ -17,6 +17,7 @@
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$here/scripts/lib/warmup.sh"
 BASE="${1:-http://127.0.0.1:8888}"
 IMAGE="${DS_IMAGE:-vllm-dsv4:ray}"
 MODEL_DIR="${DS_MODEL_DIR:-/home/station/models/hf/dsv4-flash-fp8}"
@@ -28,14 +29,7 @@ FLAGS="${CAMPAIGN_FLAGS:-$(docker inspect --format '{{join .Args " "}}' "$CONTAI
 [ -n "$FLAGS" ] || { echo "could not read launch flags from $CONTAINER" >&2; exit 2; }
 echo "== flags, read from the running container:"; echo "   $FLAGS"
 
-warmup() {
-  echo "== warmup (discarded)"
-  for i in 1 2 3; do
-    curl -s --max-time 600 "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \
-      -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Write one sentence about caching."}],"max_tokens":64,"temperature":0}' \
-      -o /dev/null -w "   warmup $i: http=%{http_code} %{time_total}s\n" || true
-  done
-}
+warmup() { warmup_engine "$BASE" "deepseek-v4-flash"; }
 
 cell() {
   local workload="$1" users="$2" note="$3"

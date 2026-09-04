@@ -8,6 +8,7 @@
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$here/scripts/lib/warmup.sh"
 BASE="${1:-http://127.0.0.1:30000}"
 IMAGE="${GLM_IMAGE:-lmsysorg/sglang:glm-5.3-flash}"
 MODEL_DIR="${GLM_MODEL_DIR:-/home/station/models/hf/glm53-flash-nvfp4-ref}"
@@ -18,14 +19,7 @@ FLAGS="${CAMPAIGN_FLAGS:-$(docker inspect --format '{{join .Args " "}}' "$CONTAI
 [ -n "$FLAGS" ] || { echo "could not read launch flags from $CONTAINER" >&2; exit 2; }
 echo "== flags, read from the running container:"; echo "   $FLAGS"
 
-warmup() {
-  echo "== warmup (discarded)"
-  for i in 1 2 3; do
-    curl -s --max-time 300 "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \
-      -d '{"model":"glm53-flash","messages":[{"role":"user","content":"Write one sentence about caching."}],"max_tokens":64,"temperature":0}' \
-      -o /dev/null -w "   warmup $i: http=%{http_code} %{time_total}s\n" || true
-  done
-}
+warmup() { warmup_engine "$BASE" "glm53-flash"; }
 
 cell() {
   local workload="$1" users="$2" note="$3"

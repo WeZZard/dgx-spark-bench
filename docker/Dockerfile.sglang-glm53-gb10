@@ -1,0 +1,9 @@
+# SGLang's GLM-5.3-Flash image with one change: the DSA tilelang kernel is
+# tuned to fit GB10's 101,376-byte dynamic shared-memory limit. Everything
+# else is upstream. See docker/patch-tilelang-gb10.py for the measurements.
+#
+# Built as a separate tag so the engine field of every recorded tuple names
+# the thing that actually ran. A patched image is not the base image.
+FROM lmsysorg/sglang:glm-5.3-flash
+COPY patch-tilelang-gb10.py /tmp/patch-tilelang-gb10.py
+RUN python3 /tmp/patch-tilelang-gb10.py && rm /tmp/patch-tilelang-gb10.py

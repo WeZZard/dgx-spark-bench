@@ -36,7 +36,17 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$here/scripts/lib/memguard.sh"
 source "$here/scripts/lib/rdma.sh"
 
-GLM_IMAGE="${GLM_IMAGE:-lmsysorg/sglang:glm-5.3-flash}"
+# lmsysorg/sglang:glm-5.3-flash plus one patch, built by
+# scripts/build-sglang-glm53-gb10.sh. The stock image's DSA tilelang kernel
+# asks for 169,984 B of dynamic shared memory; GB10 allows 101,376, so every
+# forward pass dies with "Failed to set the allowed dynamic shared memory size
+# to 169984" after a seventeen-minute weight load. Measured standalone at this
+# model's real shapes, block_I=32/num_stages=1/threads=128 both fits and has a
+# valid fragment layout -- see docker/patch-tilelang-gb10.py for the table.
+#
+# It is a separate tag on purpose: the engine field of a recorded tuple has to
+# name what actually ran, and a patched image is not the base image.
+GLM_IMAGE="${GLM_IMAGE:-sglang-glm53:gb10-tilelang}"
 GLM_NAME="${GLM_NAME:-sglang_glm53}"
 GLM_PORT="${GLM_PORT:-30000}"
 GLM_DIST_ADDR="${GLM_DIST_ADDR:-10.10.10.1:20000}"

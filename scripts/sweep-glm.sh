@@ -53,6 +53,23 @@ teardown
 # ...and once on every way out of this script, however it ends.
 trap teardown EXIT
 
+# REFUSE TO MEASURE ON A GPU THAT WILL NOT CLOCK UP.
+#
+# Fatal, and placed here rather than after bring-up, because this is the only
+# moment both GPUs are idle and a probe cannot collide with a loaded model.
+# It costs about 50 seconds against a 21-minute bring-up.
+#
+# On 2026-09-05 the head node was found pinned at 682-695 MHz against its
+# peer's 2288-2340 MHz on identical hardware, with P0, no throttle reason and
+# no clock lock reported -- for its entire 34-hour uptime, which was every
+# measurement this repo had taken. A reboot restored it. Nothing in the
+# engine or the launcher can see this; only a known load and a clock sample
+# can. See scripts/check-clocks.sh.
+if ! bash scripts/check-clocks.sh probe; then
+  echo "== refusing to measure: a node is not clocking up. See above." >&2
+  exit 1
+fi
+
 ( setsid nohup bash scripts/bring-up.sh scripts/launch-glm-sglang.sh > "$log" 2>&1 < /dev/null & )
 
 wait_ready "$NAME" "$BASE" "$log" || exit 1

@@ -58,6 +58,28 @@ DS_HOST_IP="${DS_HOST_IP:-$( [ "$RANK" = 0 ] && echo 10.10.10.1 || echo 10.10.10
 DS_MODEL="${DS_MODEL:-/home/station/models/hf/dsv4-flash-fp8}"
 
 DS_KV_DTYPE="${DS_KV_DTYPE:-fp8_ds_mla}"
+
+# PREFIX CACHE: THE SAME SETTING FOR ALL THREE MODELS, AND RECORDED.
+#
+# Until 2026-09-05 this was set for Qwen (--disable-radix-cache, copied from
+# the published recipe) and left at the engine default for DeepSeek and GLM,
+# which is ON for both vLLM and SGLang. So the model that lost several
+# comparisons was the only one denied a cache the Qwen launcher's own comment
+# calls "worth roughly 3x on multi-turn agent traffic". Nothing in the
+# six-field tuple recorded the difference.
+#
+# It also breaks the measurement, not just the fairness. Every sample of a
+# cell uses the same seeded prompt, so a sample that hits the cache is timing
+# a lookup rather than a prefill: DeepSeek's agentic-33k @ 1 read 45.5 tok/s
+# with a 508 ms time-to-first-token on a 27,000-token prompt, against 22.6 at
+# 12,263 ms for the samples that actually ran one. Which sample gets the hit
+# is down to eviction, so the cell swung 2.0x.
+#
+# Default off, so every cell measures a real prefill and the three models are
+# like-for-like. A deployment with genuine multi-turn reuse would do better
+# than these numbers, and measuring that is a separate configuration, not a
+# default.
+DS_PREFIX_CACHE="${DS_PREFIX_CACHE:-off}"
 DS_MAX_LEN="${DS_MAX_LEN:-262144}"
 DS_MAX_SEQS="${DS_MAX_SEQS:-12}"
 DS_BATCHED_TOKENS="${DS_BATCHED_TOKENS:-8192}"
@@ -145,6 +167,7 @@ if [ "$DS_SPEC" = "on" ]; then
     "{\"method\":\"dspark\",\"num_speculative_tokens\":${DS_SPEC_TOKENS},\"draft_sample_method\":\"${DS_SPEC_SAMPLE}\"}" )
 fi
 # shellcheck disable=SC2206
+[ "$DS_PREFIX_CACHE" = "off" ] && args+=( --no-enable-prefix-caching )
 [ -n "$DS_EXTRA" ] && args+=( $DS_EXTRA )
 
 # Every rank must see the checkpoint at the SAME container path, and that

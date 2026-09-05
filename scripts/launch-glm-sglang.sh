@@ -105,6 +105,27 @@ GLM_EP="${GLM_EP:-on}"                      # expert parallelism: see note 1
 # GLM_ALLOW_UNREACHABLE_DSA=1 says the failure is the point.
 GLM_DSA="${GLM_DSA:-tilelang}"
 GLM_KV_DTYPE="${GLM_KV_DTYPE:-bfloat16}"
+
+# PREFIX CACHE: THE SAME SETTING FOR ALL THREE MODELS, AND RECORDED.
+#
+# Until 2026-09-05 this was set for Qwen (--disable-radix-cache, copied from
+# its published recipe) and left at the engine default for DeepSeek and GLM,
+# which is ON for both vLLM and SGLang. So the model that lost several
+# comparisons was the only one denied a cache the Qwen launcher's own comment
+# calls "worth roughly 3x on multi-turn agent traffic", and nothing in the
+# six-field tuple recorded the difference.
+#
+# It breaks the measurement as well as the fairness. Every sample of a cell
+# uses the same seeded prompt, so a sample that hits the cache times a lookup
+# rather than a prefill: DeepSeek's agentic-33k @ 1 read 45.5 tok/s with a
+# 508 ms time-to-first-token on a 27,000-token prompt, against 22.6 at
+# 12,263 ms for the samples that ran one. Which sample gets the hit is down to
+# eviction, so the cell swung 2.0x for no reason to do with the model.
+#
+# Default off, so every cell measures a real prefill and the three are
+# like-for-like. A deployment with genuine multi-turn reuse does better than
+# these numbers; measuring that is a separate configuration, not a default.
+GLM_RADIX="${GLM_RADIX:-off}"
 # Read by the GLM_MEM branch below, so it is set before it, not with its
 # siblings further down. `set -u` turns the other order into a crash.
 GLM_SPEC="${GLM_SPEC:-on}"
@@ -224,6 +245,7 @@ if [ -n "$GLM_DSA" ]; then
   args+=( --dsa-prefill-backend "$GLM_DSA" --dsa-decode-backend "$GLM_DSA" )
 fi
 [ "$GLM_EP" = "on" ] && args+=( --ep-size 2 )
+[ "$GLM_RADIX" = "off" ] && args+=( --disable-radix-cache )
 if [ "$GLM_SPEC" = "on" ]; then
   [ -d "$GLM_DRAFT" ] || { echo "rank $RANK: drafter $GLM_DRAFT not readable" >&2; exit 6; }
   args+=(

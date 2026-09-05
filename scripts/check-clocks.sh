@@ -25,6 +25,8 @@
 set -uo pipefail
 
 MIN_MHZ="${CLOCK_MIN_MHZ:-2000}"
+# Power is the counter that does not lie; see the verdict below.
+MIN_WATT="${CLOCK_MIN_WATT:-50}"
 SECS="${CLOCK_PROBE_SECS:-30}"
 export SECS
 IMAGE="${CLOCK_PROBE_IMAGE:-vllm-dsv4:ray}"
@@ -101,11 +103,28 @@ case "${1:-probe}" in
         echo "   to judge the clock. Raise CLOCK_PROBE_SECS and try again." >&2
         rc=1
       elif [ "${mhz:-0}" -lt "$MIN_MHZ" ]; then
-        echo "!! $label: ${mhz} MHz under load, against a ${MIN_MHZ} MHz floor." >&2
-        echo "   This node is in the GB10 low-clock state. Every number measured" >&2
-        echo "   in TP2 with it is paced by it and is not a real result." >&2
-        echo "   Reboot this node, then re-run this probe." >&2
-        rc=1
+        # TWO COUNTERS, AND ONLY ONE OF THEM IS RELIABLE.
+        #
+        # clocks.sm on GB10 intermittently returns the idle value under full
+        # load: this guard read "208 MHz over 18 loaded samples" on a node
+        # that was simultaneously drawing 91.5 W, and which read 2288-2307 MHz
+        # at 90 W when asked again a minute later. 208 MHz and 91 W cannot
+        # both be true. Power can: the genuine low-clock state drew 17 W
+        # against a healthy 91 W for the same matmul, and that is what made
+        # the original diagnosis stick.
+        #
+        # So a low clock alone is not enough to condemn a node. Both counters
+        # have to agree.
+        if awk "BEGIN{exit !($watt < $MIN_WATT)}"; then
+          echo "!! $label: ${mhz} MHz and ${watt} W under load, against a" >&2
+          echo "   ${MIN_MHZ} MHz / ${MIN_WATT} W floor. This node is in the GB10" >&2
+          echo "   low-clock state. Every number measured in TP2 with it is paced" >&2
+          echo "   by it and is not a real result. Reboot it, then re-run this probe." >&2
+          rc=1
+        else
+          echo "   $label: clocks.sm read ${mhz} MHz but power is ${watt} W, which"
+          echo "   cannot both be true. Trusting power; clocks.sm misreports here."
+        fi
       fi
     done
     [ "$rc" = 0 ] && echo "   both nodes clock up: OK"

@@ -135,6 +135,19 @@ def cmd_measure(a) -> int:
         flags=a.flags,
         notes=a.notes,
     )
+    # --no-record: run the load, print nothing to the database.
+    #
+    # This exists so warmup can drive the EXACT (workload, users) pairs the
+    # campaign will measure, rather than a hand-written approximation of them.
+    # The approximation is what failed: warmup sent an 8-way burst of 10-token
+    # prompts, and the campaign then compiled kernels inside `short @ 6`
+    # (103-token prompts) and `agentic-4k @ 6` (3,502-token prompts), charging
+    # 35 s and 50 s of compile time to those cells' time-to-first-token. Shape
+    # coverage has to be by construction, not by guessing which shapes matter.
+    if a.no_record:
+        print("(not recorded: --no-record)")
+        return 0 if not failed else 1
+
     store = RunStore(a.db)
     run_id = store.record(rt, measured, res.traces, extra, started_at=t0)
     store.close()
@@ -449,6 +462,8 @@ def main(argv=None) -> int:
     m.add_argument("--flags")
     m.add_argument("--notes")
     m.add_argument("--db", default=DEFAULT_DB)
+    m.add_argument("--no-record", action="store_true",
+                   help="run the load but write nothing to the database; for warmup")
     m.set_defaults(fn=cmd_measure)
 
     r = sub.add_parser("report", help="render every recorded tuple")

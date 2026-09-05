@@ -62,7 +62,48 @@ cell() {
     || echo "!! cell failed: $workload @ $users (continuing)"
 }
 
+# Shape coverage by construction: warm every (workload, users) pair the
+# campaign is about to measure, using the same generator and the same seed,
+# recording nothing.
+#
+# The hand-written warmup could not do this. It sent a burst of 10-token
+# prompts, and campaigns then compiled kernels INSIDE measured cells --
+# charging tens of seconds to their time-to-first-token and making those cells
+# swing by up to 2.2x between samples of one unchanged server. The engines say
+# so themselves: vLLM's jit_monitor prints "TileLang JIT compilation during
+# inference ... consider extending warmup to cover this shape/config", and
+# SGLang prints "Triton kernel ... took 1.91 s to compile after serving
+# started. Serving-time compilation can stall the engine".
+#
+# max_tokens is small because decode-graph capture keys on batch size, not on
+# how many tokens are generated; the prefill cost is paid in full, which is
+# the point.
+warm_cell() {
+  local workload="$1" users="$2"
+  printf '   warm %s @ %s ... ' "$workload" "$users"
+  if "$here/scripts/sparkbench" measure \
+    --base "$BASE" --served-model glm53-flash \
+    --model-dir "$MODEL_DIR" --model-id LibertAIDAI/GLM-5.3-Flash-NVFP4 \
+    --engine-image "$IMAGE" --container "$CONTAINER" \
+       --workload "$workload" --users "$users" --max-tokens 8 \
+       --ignore-eos --no-record >/dev/null 2>&1; then
+    echo "ok"
+  else
+    echo "FAILED (continuing; this cell may compile while measured)"
+  fi
+}
+
 warmup
+echo "== warming every shape the campaign will measure (discarded)"
+warm_cell short 1
+warm_cell code 1
+warm_cell code 2
+warm_cell code 4
+warm_cell code 8
+warm_cell agentic-4k 1
+warm_cell agentic-4k 8
+warm_cell agentic-33k 1
+warm_cell agentic-33k 8
 cell short 1 "short-prompt cell, matches published conditions"
 cell code  1 "code, the content the published c1 figure uses"
 cell code  2 "published ladder c2"

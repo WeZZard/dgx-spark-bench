@@ -117,7 +117,47 @@ cell() {
   fi
 }
 
+# Shape coverage by construction: warm every (workload, users) pair the
+# campaign is about to measure, using the same generator and the same seed,
+# recording nothing.
+#
+# The hand-written warmup could not do this. It sent an 8-way burst of
+# 10-token prompts, and the campaign then compiled kernels INSIDE two measured
+# cells -- `short @ 6` (103-token prompts) and `agentic-4k @ 6` (3,502-token
+# prompts) -- charging 35 s and 50 s to their time-to-first-token and making
+# those two cells swing 2.2x between samples of one unchanged server. vLLM's
+# own jit_monitor prints the diagnosis: "TileLang JIT compilation during
+# inference ... consider extending warmup to cover this shape/config".
+#
+# max_tokens is small because decode-graph capture keys on batch size, not on
+# how many tokens are generated; the prefill cost is paid in full, which is
+# the point.
+warm_cell() {
+  local workload="$1" users="$2"
+  printf '   warm %s @ %s ... ' "$workload" "$users"
+  if "$here/scripts/sparkbench" measure \
+    --base "$BASE" --served-model deepseek-v4-flash \
+    --model-dir "$MODEL_DIR" --model-id "$MODEL_ID" \
+    --engine-image "$IMAGE" --container "$CONTAINER" \
+       --workload "$workload" --users "$users" --max-tokens 8 \
+       --ignore-eos --no-record >/dev/null 2>&1; then
+    echo "ok"
+  else
+    echo "FAILED (continuing; this cell may compile while measured)"
+  fi
+}
+
 warmup
+echo "== warming every shape the campaign will measure (discarded)"
+warm_cell short 1
+warm_cell short 6
+warm_cell code 1
+warm_cell code 6
+warm_cell prose 1
+warm_cell agentic-4k 1
+warm_cell agentic-4k 6
+warm_cell agentic-33k 1
+warm_cell agentic-33k 6
 cell short 1 "short-prompt cell, matches published conditions"
 cell short 6 "published concurrency c6"
 cell code  1 "code: the content DSpark accepts best, ~78% per the source"

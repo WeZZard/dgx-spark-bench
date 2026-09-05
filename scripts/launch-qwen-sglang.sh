@@ -196,6 +196,34 @@ mounts=()
 if ls /mnt/models >/dev/null 2>&1; then
   mounts+=( -v /mnt/models:/mnt/models:ro )
 fi
+
+# PERSIST THE JIT CACHES ACROSS TEARDOWNS.
+#
+# TileLang, Triton and FlashInfer all compile kernels at first use and write
+# them under /root inside the container. Nothing was mounted there, so
+# `docker rm -f` at the end of every sweep deleted the lot and every bring-up
+# recompiled from zero: of a 1,274 s bring-up, roughly 400 s is weight loading
+# and the remaining ~870 s is compilation.
+#
+# Worse across two nodes than one. Each rank has its own container and its own
+# cache, so the same kernel is compiled twice, and because the ranks sit in a
+# collective the compilations serialise -- one rank compiles while the other
+# spins in NCCL. The stall is the sum, not the max. That is what a cool head
+# node beside a hot worker looks like from the front panel.
+#
+# Keyed by image tag, so an image change cannot serve a kernel compiled
+# against a different build. The cache is per node and never shared over NFS:
+# these are compiled artefacts, and two nodes writing one directory is a way
+# to get a torn one.
+CACHE_ROOT="${SPARKBENCH_CACHE_ROOT:-$HOME/.cache/sparkbench}/$(printf '%s' "$QWEN_IMAGE" | tr ':/' '__')"
+mkdir -p "$CACHE_ROOT"/{tilelang,triton,flashinfer,vllm,inductor} 2>/dev/null || true
+mounts+=(
+  -v "$CACHE_ROOT/tilelang:/root/.tilelang"
+  -v "$CACHE_ROOT/triton:/root/.triton"
+  -v "$CACHE_ROOT/flashinfer:/root/.cache/flashinfer"
+  -v "$CACHE_ROOT/vllm:/root/.cache/vllm"
+  -v "$CACHE_ROOT/inductor:/root/.cache/torchinductor"
+)
 case "$QWEN_MODEL" in
   /mnt/models/*)
     [ -d "$QWEN_MODEL" ] || { echo "rank $RANK: $QWEN_MODEL not readable; is the NFS automount up?" >&2; exit 6; } ;;

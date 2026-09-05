@@ -117,9 +117,20 @@ warmup() { warmup_engine "$BASE" "qwen38-flash-next"; }
 # SGLang prints "Triton kernel ... took 1.91 s to compile after serving
 # started. Serving-time compilation can stall the engine".
 #
-# max_tokens is small because decode-graph capture keys on batch size, not on
-# how many tokens are generated; the prefill cost is paid in full, which is
-# the point.
+# max_tokens is the SAME as the measured cells, not a token or two.
+#
+# The first version used 8, on the theory that decode-graph capture keys on
+# batch size and the prefill cost is paid in full either way. That fixed the
+# cells whose cost was prefill compilation -- code @ 6 went from 1.64x spread
+# to 1.07x -- and left the ones whose cost is not: `short @ 6` still read
+# 90.0, 138.8, 139.0 across three samples of one server with DSpark
+# acceptance flat at 75/70/80%, so nothing about drafting explains it. An
+# 8-token warmup never reaches the sequence lengths, KV block counts or
+# attention buckets a 512-token cell reaches, so those are still compiled or
+# tuned inside the first measured sample.
+#
+# Warming at full length costs one extra campaign per sweep. That is cheap
+# against publishing a number that is 35% low because it went first.
 warm_cell() {
   local workload="$1" users="$2"
   printf '   warm %s @ %s ... ' "$workload" "$users"
@@ -127,7 +138,7 @@ warm_cell() {
     --base "$BASE" --served-model qwen38-flash-next \
     --model-dir "$MODEL_DIR" --model-id RadixArk/Qwen3.8-Flash-Next-NVFP4 \
     --engine-image "$IMAGE" --container "$CONTAINER" \
-       --workload "$workload" --users "$users" --max-tokens 8 \
+       --workload "$workload" --users "$users" --max-tokens "$MAXTOK" \
        --ignore-eos --no-record >/dev/null 2>&1; then
     echo "ok"
   else
